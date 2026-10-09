@@ -1,0 +1,7 @@
+.venv/
+data/
+*.local.yaml
+.env
+__pycache__/
+AI_MISTAKES.md
+DECISIONS.md
