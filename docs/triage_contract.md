@@ -2,8 +2,10 @@
 
 Source of truth for the triage module. If this file and a chat disagree, this file wins.
 Code: `src/tracker/triage/contract.py`. Tests: `tests/test_triage_contract.py`.
-Approved by Charles on 8 Nov 2026 (design change of 3 Nov 2026). Items marked
-**pending** were proposed after the survey and are not yet individually approved.
+Approved by Charles on 8 Nov 2026 (design change of 3 Nov 2026).
+Amendment A1 (`sitemap_jobs`) was accepted on 8 Nov 2026.
+Amendment A2 (`json-api`) is kept as RESERVED vocabulary: it is in the contract, but nothing
+builds or checks it until the extraction step.
 
 ## Purpose
 
@@ -25,7 +27,7 @@ never seen. It classifies; it does not extract listings (a later step).
 ## Input: `FirmInput`
 
 `name`, `careers_url`, and optional hints: `listing_url`, `example_job_url`, `terms_url`,
-`api_url` (a JSON endpoint a human captured in the browser; **pending**). Inputs are never
+`api_url` (reserved: a JSON endpoint a human captured in the browser; GET only for now, a POST endpoint would need a method and body field added later). Inputs are never
 validated: a bad URL becomes a `failed/invalid_url` result later, never an exception.
 
 ## Status: did the check work?
@@ -39,14 +41,14 @@ validated: a bad URL becomes a `failed/invalid_url` result later, never an excep
 
 ## Mode: how could the firm be monitored?
 
-`feed`, `json-ld`, `json-api` (**pending**), `vendor`, `html`, `js-only`, `manual`, `blocked`, `unknown`.
+`feed`, `json-ld`, `json-api` (reserved), `vendor`, `html`, `js-only`, `manual`, `blocked`, `unknown`.
 Priority when several apply: feed, json-ld, json-api, vendor, html, js-only, manual.
 
 | mode | must be observed (required evidence kind) |
 |---|---|
 | feed | a feed fetched and parsed whose items link to job-like URLs (`feed_parsed`). A blog feed does not count. |
 | json-ld | a JobPosting JSON-LD block (`jsonld_jobposting`) |
-| json-api | a JSON endpoint given as a hint, fetched and parsed (`api_json`) |
+| json-api | reserved: a JSON endpoint given as a hint, fetched and parsed (`api_json`). Nothing produces it yet. |
 | vendor | a hostname of a known recruiting system (`vendor_host`) |
 | html | several job-like links in the raw HTML (`job_links`) |
 | js-only | no job content in the raw HTML and app-shell markers (`spa_shell`) |
@@ -65,7 +67,7 @@ Priority when several apply: feed, json-ld, json-api, vendor, html, js-only, man
 | unresolved | status failed or empty |
 
 A `sitemap_line` (a Sitemap: line in robots.txt) is NOT a URL source. Only `sitemap_jobs`
-(a sitemap that was fetched and lists job-like URLs) counts (**pending**).
+(a sitemap that was fetched and lists job-like URLs) counts (accepted).
 
 ## Result invariants (enforced in code, tested)
 
@@ -117,7 +119,8 @@ as blocked / manual. Threshold stays 8 for the 19 surveyed firms (40% of 19 roun
 | gzip and deflate bodies handled; size and JSON nesting capped | T2 |
 | Block detection: 401/403/429 and robots disallow are blocked; challenge pages need a tiny body plus a known marker from a REAL captured page (no marker is written without a capture); the word "captcha" alone is not evidence | T2/T3 |
 | Response cache and replay, so improving analysis never re-contacts a firm | T2 |
-| Fetch the first sitemap and check for job-like URLs (**pending**; budget 10 requests per firm) | T3 |
+| Fetch the first sitemap (or the first file of a sitemap index) and stop reading at about 2 MB. Job-like means: at least 5 URLs with the same path shape as the example job URL, or at least 5 URLs with job words when there is no example. The exact rule is fixed in T3 on real sitemap captures; no sitemap structure is assumed before that. Budget: 10 requests per firm. | T3 |
+| If `api_url` is given, add a `note` evidence "api_url provided, not checked in this version", so a hint is never silently ignored | T4 |
 | Job-link counting replaces the "title in raw HTML" check | T3 |
 | Vendor table from hostnames observed in the survey: myworkdayjobs.com, oraclecloud.com, csod.com, softgarden.io, yello.co, ultipro.com, successfactors, icims, phenom; each entry says how it was verified | T3 |
 | Terms patterns widened (EN, FR, ES, DE, NL, PT, IT); unsupported language is `not_assessed` | T3 |
@@ -135,3 +138,9 @@ as blocked / manual. Threshold stays 8 for the 19 surveyed firms (40% of 19 roun
 | T6 | run on the 19 surveyed firms, compare with the old survey, decide the gate |
 
 The old `scripts/source_survey.py` stays unchanged as the T6 baseline.
+
+## Needed from Charles before T3
+
+Real files saved from the browser (no structure is invented): the Banque de France sitemap
+(`.../recrutement-banque-de-france/siteMap.xml`, listed in its robots.txt) and the AXA sitemap
+(`careers.axa.com/sitemap.xml` and the `sitemap1.xml` it points to, or the first part of it).
