@@ -3,6 +3,10 @@ data/
 *.local.yaml
 .env
 __pycache__/
+survey_input.csv
+survey_output/
+survey_summary.txt
+.pytest_cache/
+test_results.txt
 AI_MISTAKES.md
 DECISIONS.md
-survey_dryrun/
