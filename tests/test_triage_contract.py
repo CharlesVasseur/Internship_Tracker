@@ -82,6 +82,7 @@ def test_error_retryable_defaults_follow_the_kind():
     assert TriageError.of("timeout", "slow").retryable is True
     assert TriageError.of("tls", "certificate verify failed").retryable is False
     assert TriageError.of("decode", "unknown encoding").retryable is False
+    assert TriageError.of("http_4xx", "HTTP 404").retryable is False
     assert TriageError.of("internal", "bug").retryable is False
     assert TriageError.of("timeout", "slow", retryable=False).retryable is False
 
@@ -89,6 +90,13 @@ def test_error_retryable_defaults_follow_the_kind():
 def test_every_error_kind_can_be_built():
     for kind in ERROR_KINDS:
         assert TriageError.of(kind, "message").kind == kind
+
+
+def test_http_4xx_amendment_a3_is_not_retryable_and_leaves_the_firm_unresolved():
+    """A3 (10 Nov 2026): a normal page answering 4xx (not 401/403/429) is a visible failure."""
+    assert ERROR_KINDS["http_4xx"] is False
+    result = failed_result("http_4xx")
+    assert (result.status, result.mode, result.verdict) == ("failed", "unknown", "unresolved")
 
 
 def test_error_needs_a_known_kind_and_a_message():

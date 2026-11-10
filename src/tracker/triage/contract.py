@@ -81,6 +81,7 @@ ERROR_KINDS: dict[str, bool] = {
     "http_5xx": True,
     "robots_unreachable": True,
     "budget": True,           # the per-firm time budget ran out
+    "http_4xx": False,        # a normal page answered 4xx (not 401/403/429): wrong URL or moved page
     "tls": False,             # a certificate error does not fix itself on retry
     "decode": False,
     "too_large": False,

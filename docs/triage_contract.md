@@ -6,6 +6,7 @@ Approved by Charles on 8 Nov 2026 (design change of 3 Nov 2026).
 Amendment A1 (`sitemap_jobs`) was accepted on 8 Nov 2026.
 Amendment A2 (`json-api`) is kept as RESERVED vocabulary: it is in the contract, but nothing
 builds or checks it until the extraction step.
+Amendment A3 (`http_4xx`) was accepted on 10 Nov 2026.
 
 ## Purpose
 
@@ -89,6 +90,9 @@ quoted or counted).
 
 Retryable: `timeout`, `dns`, `connection`, `http_5xx`, `robots_unreachable`, `budget`.
 Not retryable: `tls` (a certificate error does not fix itself; never turn verification off),
+`http_4xx` (a normal page answered 4xx other than 401, 403 or 429, for example 404: the URL is
+probably wrong or the page moved, so a human must look; a 404 on `robots.txt` is NOT an error, it
+means there are no rules),
 `decode`, `too_large`, `not_text`, `invalid_url`, `redirect_loop`, `internal` (a bug).
 
 ## Block reasons (status blocked)
@@ -113,7 +117,10 @@ as blocked / manual. Threshold stays 8 for the 19 surveyed firms (40% of 19 roun
 | rule | step |
 |---|---|
 | Follow cross-host redirects (max 5) after checking robots.txt of each host | T2 |
-| Honour `Crawl-delay`: wait the larger of 1 second and the delay for our agent | T2 |
+| Honour `Crawl-delay`: wait the larger of 1 second and the delay for our agent. A delay above 10 s (an adjustable constant, default 10) is not waited for: the host fails with `failed/budget` and the message quotes the delay | T2 |
+| robots.txt matching: our own matcher following RFC 9309 (wildcards `*` and `$`, longest match wins, Allow wins ties, unclear or unreadable rules mean not allowed), NOT `urllib.robotparser`, which reads wildcards literally (Milliman). Decided 10 Nov 2026 | T2 |
+| robots.txt answers: 404 = no rules, everything allowed; 401/403/429 = `blocked`; 5xx or timeout = `failed/robots_unreachable`, nothing is fetched from that host | T2 |
+| HTTP answers for normal pages: 2xx ok; 3xx followed; 401/403/429 = `blocked`, never retried, host stopped; other 4xx = `failed/http_4xx`; 5xx retried, then `failed/http_5xx` | T2 |
 | TLS errors: one attempt, `failed/tls`, never retried, verification never disabled | T2 |
 | Charset: header, BOM, `<meta>`, UTF-8, then cp1252 as a recorded fallback; an unknown name (for example `ISO-8852`) falls back, it does not fail | T2 |
 | gzip and deflate bodies handled; size and JSON nesting capped | T2 |
