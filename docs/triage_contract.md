@@ -126,6 +126,7 @@ as blocked / manual. Threshold stays 8 for the 19 surveyed firms (40% of 19 roun
 | gzip and deflate bodies handled; size and JSON nesting capped | T2 |
 | Block detection: 401/403/429 and robots disallow are blocked; challenge pages need a tiny body plus a known marker from a REAL captured page (no marker is written without a capture); the word "captcha" alone is not evidence | T2/T3 |
 | Response cache and replay, so improving analysis never re-contacts a firm | T2 |
+| Cache format: `triage_cache/<host>/<hash of url>.json` (folder set by `--cache-dir`, listed in `.gitignore`), one file per request holding the url, the time and either the wire body as base64 with status and headers, or the typed transport error. A live run with a cache writes every answer and failure; `--replay` reads only and has no network access; a url missing in replay is `failed/internal` "not in cache"; a broken cache file is `failed/internal`, never silent | T2 |
 | Fetch the first sitemap (or the first file of a sitemap index) and stop reading at about 2 MB. Job-like means: at least 5 URLs with the same path shape as the example job URL, or at least 5 URLs with job words when there is no example. The exact rule is fixed in T3 on real sitemap captures; no sitemap structure is assumed before that. Budget: 10 requests per firm. | T3 |
 | If `api_url` is given, add a `note` evidence "api_url provided, not checked in this version", so a hint is never silently ignored | T4 |
 | Job-link counting replaces the "title in raw HTML" check | T3 |

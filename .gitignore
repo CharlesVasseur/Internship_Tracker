@@ -6,7 +6,9 @@ __pycache__/
 survey_input.csv
 survey_output/
 survey_summary.txt
+survey_failures.txt
 .pytest_cache/
 test_results.txt
 AI_MISTAKES.md
 DECISIONS.md
+triage_cache/
