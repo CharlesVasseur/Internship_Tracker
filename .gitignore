@@ -12,3 +12,5 @@ test_results.txt
 AI_MISTAKES.md
 DECISIONS.md
 triage_cache/
+   tests/local_fixtures/*
+   !tests/local_fixtures/README.md
