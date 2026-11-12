@@ -269,3 +269,12 @@ def test_evidence_kinds_and_lengths_always_follow_the_contract():
         for text in ("", '<div id="root"></div>', page_with(anchors("/en/jobs/", 7))):
             for item in analyze_listing(PAGE, text, example).evidence:
                 assert item.kind in EVIDENCE_KINDS and len(item.detail) <= MAX_DETAIL
+
+
+# -- broken addresses must never crash an analyzer ----------------------------------------------------------
+
+def test_a_broken_href_is_skipped_not_fatal():
+    hrefs = ["http://[bad", "https://[x", "//[y"] + links("/en/jobs/", 5)
+    assert count_job_links(hrefs, PAGE, "https://x.test/en/jobs/100").count == 5
+    page = anchors_to(["http://[bad"]) + anchors("/en/jobs/", 6)
+    assert analyze_listing(PAGE, page, "https://x.test/en/jobs/100").job_link_count == 6

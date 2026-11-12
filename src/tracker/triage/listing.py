@@ -32,6 +32,7 @@ from dataclasses import dataclass
 
 from tracker.triage.contract import Evidence
 from tracker.triage.html_scan import scan_html
+from tracker.triage.urls import resolve_url
 
 MIN_JOB_LINKS = 5     # "several": at least this many links share the shape
 
@@ -77,8 +78,8 @@ def count_job_links(hrefs: list[str] | tuple[str, ...], page_url: str, example_u
 
     candidates = set()
     for href in hrefs:
-        absolute = urllib.parse.urldefrag(urllib.parse.urljoin(page_url, href))[0]
-        parts = _parts(absolute)
+        absolute = resolve_url(page_url, href, drop_fragment=True)
+        parts = _parts(absolute) if absolute else None
         if parts is not None:
             candidates.add((absolute, parts))
 

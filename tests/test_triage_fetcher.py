@@ -538,3 +538,19 @@ def test_fetch_result_invariants():
 def test_fetch_result_wants_tuples():
     with pytest.raises(ContractError):
         FetchResult(PAGE, PAGE, "ok", text="x", requests=[PAGE])
+
+
+# -- broken redirect addresses ------------------------------------------------------------------------------------------
+
+def test_a_redirect_to_a_broken_address_is_invalid_url_not_internal():
+    transport = simple(redirect("http://[bad"))
+    result = make(transport)[0].fetch(PAGE)
+    assert result.status == "failed" and result.error.kind == "invalid_url"
+    assert "redirect target" in result.error.message
+
+
+def test_a_robots_redirect_to_a_broken_address_is_reported_not_fatal():
+    transport = simple(robots=redirect("http://[bad"))
+    result = make(transport)[0].fetch(PAGE)
+    assert result.status == "failed" and result.error.kind == "redirect_loop"
+    assert "unusable redirect" in result.error.message

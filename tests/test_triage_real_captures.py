@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tracker.triage.listing import analyze_listing, count_job_links
+from tracker.triage.vendors import analyze_vendors
 
 LOCAL = Path(__file__).parent / "local_fixtures"
 MANIFEST = LOCAL / "manifest.json"
@@ -42,6 +43,16 @@ def test_real_listing_page(case):
     assert findings.job_link_count == case["expect_job_links"]
     kinds = [item.kind for item in findings.evidence]
     assert ("spa_shell" in kinds) == case["expect_spa_shell"]
+
+
+NEUTRAL_PAGE = "https://neutral.example.test/careers"
+
+
+@pytest.mark.parametrize("case", cases("listing"), ids=lambda case: case["file"])
+def test_real_listing_vendor_hosts_are_found_inside_the_page(case):
+    """A neutral page address is used, so the vendor host must come from the page's own tags."""
+    found = analyze_vendors(NEUTRAL_PAGE, read(case["file"]))
+    assert {item.detail.split(":")[0] for item in found} == set(case["expect_vendors"])
 
 
 @pytest.mark.parametrize("case", cases("sitemap_shape"), ids=lambda case: case["file"])

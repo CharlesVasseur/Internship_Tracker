@@ -32,6 +32,7 @@ from typing import Callable
 from tracker.triage.contract import BlockInfo, TriageError
 from tracker.triage.decode import decode_body
 from tracker.triage.fetch_result import FetchResult
+from tracker.triage.urls import resolve_url
 from tracker.triage.robots import (
     MAX_CRAWL_DELAY_SECONDS,
     MIN_SECONDS_PER_HOST,
@@ -132,7 +133,10 @@ class Fetcher:
                 if not location:
                     return self._failed(url, current, chain, start, TriageError.of(
                         "redirect_loop", f"HTTP {raw.status} redirect without a Location header", current))
-                target = urllib.parse.urldefrag(urllib.parse.urljoin(current, location))[0]
+                target = resolve_url(current, location, drop_fragment=True)
+                if target is None:
+                    return self._failed(url, current, chain, start, TriageError.of(
+                        "invalid_url", f"a redirect target is not a usable address: {location!r}", current))
                 if target in visited:
                     return self._failed(url, current, chain, start, TriageError.of(
                         "redirect_loop", f"redirect loop: {target} was already visited", current))
@@ -260,7 +264,7 @@ class Fetcher:
             if isinstance(answer, _Problem) or not 300 <= answer.status < 400:
                 return answer
             location = answer.headers.get("location", "").strip()
-            target = urllib.parse.urldefrag(urllib.parse.urljoin(current, location))[0] if location else ""
+            target = (resolve_url(current, location, drop_fragment=True) or "") if location else ""
             if not target or _origin(target) is None:
                 return _Problem(error=TriageError.of(
                     "redirect_loop", f"robots.txt: unusable redirect (HTTP {answer.status})", current))
