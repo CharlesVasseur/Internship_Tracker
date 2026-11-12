@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tracker.triage.listing import analyze_listing, count_job_links
+from tracker.triage.sitemap import read_sitemap
 from tracker.triage.vendors import analyze_vendors
 
 LOCAL = Path(__file__).parent / "local_fixtures"
@@ -61,3 +62,15 @@ def test_real_sitemap_follows_the_shape_rule(case):
     for probe in case["probes"]:
         example = next(url for url in urls if probe["contains"] in url)
         assert count_job_links(urls, case["page_url"], example).count == probe["expect"]
+
+
+@pytest.mark.parametrize("case", cases("sitemap_read"), ids=lambda case: case["file"])
+def test_real_sitemap_is_read_as_expected(case):
+    text = read(case["file"])
+    example = None
+    if case["example_contains"]:
+        example = next(url for url in re.findall(r"<loc>\s*(.*?)\s*</loc>", text) if case["example_contains"] in url)
+    found = read_sitemap(case["page_url"], text, example)
+    assert found.kind == case["expect_kind"]
+    assert len(found.urls) == case["expect_urls"] and found.job_url_count == case["expect_job_urls"]
+    assert found.evidence[0].kind == case["expect_evidence"]
