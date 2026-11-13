@@ -151,8 +151,17 @@ as blocked / manual. Threshold stays 8 for the 19 surveyed firms (40% of 19 roun
 
 The old `scripts/source_survey.py` stays unchanged as the T6 baseline.
 
-## Needed from Charles before T3
+## Real captures behind the T3 rules (status at the end of T3, 12 Nov 2026)
 
-Real files saved from the browser (no structure is invented): the Banque de France sitemap
-(`.../recrutement-banque-de-france/siteMap.xml`, listed in its robots.txt) and the AXA sitemap
-(`careers.axa.com/sitemap.xml` and the `sitemap1.xml` it points to, or the first part of it).
+Saved by hand from a browser and kept on the author's machine in `tests/local_fixtures/`
+(not in the repository). No structure is invented: rules rest on what these show.
+
+| Capture | Count | What it showed |
+|---|---|---|
+| Listing pages | 3 | one with 32 job links among over 100 menu links, one with 72 job links on another host, one empty app shell (`<div id="root">`) |
+| Sitemaps | 2 | one urlset with 100 job URLs (a city folder inside the path), one valid urlset that lists no URLs (so no `sitemap1.xml` exists to find) |
+| Terms pages | 3 | three real bans on automated access: one in French, two in English (one of them written as a list under a lead-in sentence) |
+
+Still missing, so unverified on real pages: a job page with JSON-LD, an RSS or Atom feed, a sitemap
+index, a challenge page (CAPTCHA) to build block markers from, and terms pages in the other four
+supported languages. A real "no ban" terms page is also wanted to check precision.

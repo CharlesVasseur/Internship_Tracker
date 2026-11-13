@@ -17,6 +17,7 @@ import pytest
 
 from tracker.triage.listing import analyze_listing, count_job_links
 from tracker.triage.sitemap import read_sitemap
+from tracker.triage.terms import analyze_terms
 from tracker.triage.vendors import analyze_vendors
 
 LOCAL = Path(__file__).parent / "local_fixtures"
@@ -74,3 +75,11 @@ def test_real_sitemap_is_read_as_expected(case):
     assert found.kind == case["expect_kind"]
     assert len(found.urls) == case["expect_urls"] and found.job_url_count == case["expect_job_urls"]
     assert found.evidence[0].kind == case["expect_evidence"]
+
+
+@pytest.mark.parametrize("case", cases("terms"), ids=lambda case: case["file"])
+def test_real_terms_page_is_flagged_with_the_known_clause(case):
+    flag = analyze_terms(case["page_url"], read(case["file"]))
+    assert flag.status == case["expect_status"]
+    assert flag.language_guess == case["expect_language"]
+    assert any(case["expect_quote_contains"] in quote for quote in flag.quotes)

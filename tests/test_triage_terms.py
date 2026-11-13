@@ -340,9 +340,9 @@ def test_visible_text_separates_blocks_and_skips_hidden_parts():
     assert [s for s in text.split("\n") if s.strip()] == ["One.", "Two", "three", "four"]
 
 
-def test_sentences_split_on_punctuation_and_blocks_and_drop_tiny_pieces():
-    found = sentences("First sentence is here. Second one follows!\nThird line without a stop\nok")
-    assert found == ["First sentence is here.", "Second one follows!", "Third line without a stop"]
+def test_sentences_split_on_punctuation_and_blocks_and_drop_tiny_pieces_except_lead_ins():
+    found = sentences("First sentence is here. Second one follows!\nThird line without a stop\nok\nIncludes:")
+    assert found == ["First sentence is here.", "Second one follows!", "Third line without a stop", "Includes:"]
 
 
 # -- never raises, stays fast ----------------------------------------------------------------------------------------
@@ -362,3 +362,92 @@ def test_long_pages_are_analysed_quickly():
     start = time.perf_counter()
     analyze_terms(URL, "<p>" + FILLER["English"] + "</p><p>" + noise + "</p>")
     assert time.perf_counter() - start < 3.0
+
+
+# -- bans written as a list: the prohibition is in the lead-in, not in the item ---------------------------------------
+# A real captured page did exactly this and a sentence-by-sentence check missed it.
+
+LISTS = {
+    "English": ("You agree not to make any use of this site that:", "uses robots, spiders or scrapers to copy the content;"),
+    "French": ("Il est strictement interdit d'utiliser le site de manière à :", "recourir à des robots ou à des aspirateurs de sites ;"),
+    "Spanish": ("Queda estrictamente prohibido el siguiente uso del sitio:", "emplear robots o arañas para copiar el contenido;"),
+    "German": ("Folgende Nutzung der Seite ist untersagt:", "der Einsatz von Robotern oder Crawlern zum Kopieren der Inhalte;"),
+    "Dutch": ("Het is verboden om de site op de volgende manieren te gebruiken:", "robots of spiders inzetten om de inhoud te kopiëren;"),
+    "Portuguese": ("É proibida a seguinte utilização do sítio:", "utilizar robôs ou aranhas para copiar o conteúdo;"),
+    "Italian": ("È vietato il seguente utilizzo del sito:", "usare robot o spider per copiare i contenuti;"),
+}
+
+
+def list_page(language: str, lead: str, items: list[str]) -> str:
+    return (f"<html><body><p>{FILLER[language]}</p><p>{lead}</p><ul>"
+            + "".join(f"<li>{item}</li>" for item in items) + "</ul></body></html>")
+
+
+@pytest.mark.parametrize("language", sorted(LISTS))
+def test_a_ban_in_a_list_lead_in_applies_to_the_items_and_the_quote_shows_both(language):
+    lead, item = LISTS[language]
+    flag = analyze_terms(URL, list_page(language, lead, ["is illegal or abusive;", item]))
+    assert flag.status == "flagged" and flag.language_guess == language
+    assert flag.quotes == (f"{lead} {item}",)
+
+
+def test_items_far_down_the_same_list_are_still_covered():
+    """The real page had its robots item eight sentences after the lead-in."""
+    lead, item = LISTS["English"]
+    filler_items = [f"is harmful in way number {n};" for n in range(8)]
+    flag = analyze_terms(URL, list_page("English", lead, filler_items + [item]))
+    assert flag.status == "flagged"
+
+
+def test_two_items_give_two_quotes_and_not_more():
+    lead, item = LISTS["English"]
+    flag = analyze_terms(URL, list_page("English", lead, [item, "harvests personal data;", "scrapes the site;"]))
+    assert len(flag.quotes) == 2 and all(quote.startswith(lead) for quote in flag.quotes)
+
+
+def test_a_lead_in_without_a_prohibition_does_not_ban_its_items():
+    page_text = list_page("English", "Our services include:", ["robots that answer your questions;"])
+    assert analyze_terms(URL, page_text).status == "not_flagged"
+
+
+def test_a_new_lead_in_ends_the_previous_list():
+    lead, item = LISTS["English"]
+    html = (f"<p>{FILLER['English']}</p><p>{lead}</p><ul><li>is illegal;</li></ul>"
+            f"<p>We also offer:</p><ul><li>{item}</li></ul>")
+    assert analyze_terms(URL, html).status == "not_flagged"
+
+
+def test_a_short_lead_in_also_ends_the_previous_list():
+    lead, item = LISTS["English"]
+    html = f"<p>{FILLER['English']}</p><p>{lead}</p><ul><li>is illegal;</li></ul><p>Includes:</p><ul><li>{item}</li></ul>"
+    assert analyze_terms(URL, html).status == "not_flagged"
+
+
+def test_a_long_single_sentence_ends_the_list():
+    lead, item = LISTS["English"]
+    prose = "This paragraph explains how the service works in general terms and is not a list item and " * 8 + "ends."
+    assert len(prose) > 500                                  # one long sentence: prose, not a list item
+    html = f"<p>{FILLER['English']}</p><p>{lead}</p><ul><li>is illegal;</li></ul><p>{prose}</p><p>{item}</p>"
+    assert analyze_terms(URL, html).status == "not_flagged"
+
+
+def test_the_list_stops_reaching_after_25_sentences():
+    lead, item = LISTS["English"]
+    many = [f"is unlawful in way number {n};" for n in range(30)]
+    assert analyze_terms(URL, list_page("English", lead, many + [item])).status == "not_flagged"
+
+
+def test_an_item_that_carries_its_own_ban_is_quoted_alone():
+    lead, _ = LISTS["English"]
+    own = "You may not use robots to copy this site."
+    flag = analyze_terms(URL, list_page("English", lead, [own]))
+    assert flag.quotes == (own,)
+
+
+def test_a_very_long_lead_in_and_item_still_fit_the_quote_limit():
+    lead = "You agree not to make any use of this site, its content, its data or its services " + "in any way that " * 15 + "does the following:"
+    item = "uses robots to copy content " + "and more " * 30 + ";"             # under the 500-character item limit
+    flag = analyze_terms(URL, list_page("English", lead, [item]))
+    assert len(lead) > 300 and len(lead) + len(item) > MAX_QUOTE
+    assert flag.status == "flagged" and len(flag.quotes[0]) <= MAX_QUOTE and flag.quotes[0].startswith("You agree not to")
+    assert "uses robots" in flag.quotes[0]

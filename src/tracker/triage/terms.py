@@ -20,6 +20,14 @@ What counts as a hit: ONE sentence that contains both
     2. a prohibition term: not, forbidden, prohibited, without permission...
 Both lists exist in English, French, Spanish, German, Dutch, Portuguese and Italian.
 
+LISTS. Terms pages often ban things in a list: a lead-in sentence ending in ":"
+("You agree not to make any use of this site that:") followed by items, each
+with no "not" of its own. A real captured page did exactly this, and a sentence
+by sentence check missed it. So a lead-in that ends with ":" and contains a
+prohibition term applies to the items after it, until another lead-in, a long
+prose sentence (over 500 characters), or 25 sentences have passed. The quote then
+shows the lead-in followed by the item. These limits are first guesses.
+
 HONEST LIMITS. The patterns come from general legal phrasing and from three
 clause wordings described in the survey notes. No real terms page has been
 captured yet, so none of this is verified on real pages. The numbers below
@@ -47,6 +55,9 @@ from tracker.triage.html_scan import scan_html
 
 MAX_QUOTES = 2                # the contract allows one or two quotes
 MIN_SENTENCE_CHARS = 15
+LIST_REACH = 25               # how many sentences after a lead-in still count as its list items
+MAX_LIST_ITEM_CHARS = 500     # a longer sentence is prose, not a list item
+MAX_LEAD_IN_QUOTE = 150       # characters of the lead-in kept in a quote
 MIN_LANGUAGE_SHARE = 0.12     # the best language must cover this share of the words
 MIN_LANGUAGE_MARGIN = 1.25    # and beat the second best by this factor
 
@@ -100,7 +111,8 @@ def sentences(text: str) -> list[str]:
     found = []
     for raw in _SENTENCE_END.split(text):
         sentence = " ".join(raw.split())
-        if len(sentence) >= MIN_SENTENCE_CHARS:
+        # Short pieces are dropped as noise, except lead-ins ("Includes:"), which can end a list.
+        if len(sentence) >= MIN_SENTENCE_CHARS or (sentence.endswith(":") and len(sentence) > 1):
             found.append(sentence)
     return found
 
@@ -262,31 +274,64 @@ def detect_language(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _window(text: str, position: int, size: int) -> str:
+    """`text`, or if longer than `size`, a window of it around `position` with "..." marks."""
+    if len(text) <= size:
+        return text
+    room = size - 8                                         # space for the two "... " marks
+    start = max(0, min(position - 150, len(text) - room))
+    end = start + room
+    return ("... " if start > 0 else "") + text[start:end] + (" ..." if end < len(text) else "")
+
+
 def _excerpt(sentence: str, position: int) -> str:
-    """The sentence, or if it is too long for a quote, a window around the match."""
-    if len(sentence) <= MAX_QUOTE:
-        return sentence
-    window = MAX_QUOTE - 8                                  # room for the two "... " marks
-    start = max(0, min(position - 150, len(sentence) - window))
-    end = start + window
-    return ("... " if start > 0 else "") + sentence[start:end] + (" ..." if end < len(sentence) else "")
+    return _window(sentence, position, MAX_QUOTE)
+
+
+def _list_quote(lead_in: str, item: str, position: int) -> str:
+    """Lead-in and item together, within the quote limit; the lead-in keeps its start."""
+    lead = lead_in if len(lead_in) <= MAX_LEAD_IN_QUOTE else lead_in[: MAX_LEAD_IN_QUOTE - 4] + " ..."
+    return f"{lead} {_window(item, position, MAX_QUOTE - len(lead) - 1)}"
 
 
 def find_hits(text: str, preferred: str | None = None) -> list[tuple[str, str]]:
     """(language, quote) for every sentence that has an automation and a prohibition term.
 
-    Sentences in the detected language come first; the rest keep the page order.
+    A prohibition in a list's lead-in counts for the items under it (see the module
+    docstring). Sentences in the detected language come first; the rest keep the
+    page order.
     """
     order = sorted(LANGUAGES, key=lambda language: language.name != preferred)
     hits: list[tuple[str, str]] = []
+    lead_in: str | None = None        # the current list lead-in sentence, if it has a prohibition term
+    reach = 0
     for sentence in sentences(text):
         normalised = _normalise(sentence)
+        found = False
         for language in order:
             patterns = _patterns(language.name)
             match = patterns.automation.search(normalised)
             if match and patterns.prohibition.search(normalised):
                 hits.append((language.name, _excerpt(sentence, match.start())))
+                found = True
                 break
+
+        if not found and lead_in is not None and len(sentence) <= MAX_LIST_ITEM_CHARS:
+            lead_normalised = _normalise(lead_in)
+            for language in order:
+                patterns = _patterns(language.name)
+                match = patterns.automation.search(normalised)
+                if match and patterns.prohibition.search(lead_normalised):
+                    hits.append((language.name, _list_quote(lead_in, sentence, match.start())))
+                    break
+
+        if sentence.rstrip().endswith(":"):
+            has_prohibition = any(_patterns(language.name).prohibition.search(normalised) for language in LANGUAGES)
+            lead_in, reach = (sentence, LIST_REACH) if has_prohibition else (None, 0)
+        elif lead_in is not None:
+            reach -= 1
+            if reach <= 0 or len(sentence) > MAX_LIST_ITEM_CHARS:
+                lead_in = None
     hits.sort(key=lambda hit: hit[0] != preferred)          # stable: page order inside each group
     return hits
 
