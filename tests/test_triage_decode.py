@@ -213,3 +213,86 @@ def test_a_decoded_body_cannot_hold_both_text_and_error():
         DecodedBody(text="x", error_kind="decode", error_message="y")
     with pytest.raises(ValueError):
         DecodedBody()
+
+
+# -- partial mode: keep the start of a body that is too big or cut short ---------------------------------------------
+
+def test_partial_mode_keeps_the_first_bytes_of_an_oversized_plain_body():
+    result = decode_body(b"abcdefghij" * 20, HTML, limit=100, partial=True)
+    assert result.text == ("abcdefghij" * 10) and result.truncated is True and result.error_kind is None
+
+
+def test_the_default_mode_is_unchanged_and_never_reports_truncation():
+    assert decode_body(b"a" * 101, HTML, limit=100).error_kind == "too_large"
+    assert decode_body(b"a" * 100, HTML, limit=100).truncated is False
+
+
+def test_a_body_under_the_limit_is_not_truncated_even_in_partial_mode():
+    result = decode_body(b"hello", HTML, limit=100, partial=True)
+    assert result.text == "hello" and result.truncated is False
+
+
+def test_partial_mode_keeps_the_start_of_a_gzip_body_that_expands_past_the_limit():
+    result = decode_body(gzip.compress(b"a" * 5000), {**HTML, "content-encoding": "gzip"}, limit=100, partial=True)
+    assert result.text == "a" * 100 and result.truncated is True
+
+
+def test_partial_mode_reads_a_compressed_body_cut_short_as_far_as_it_goes():
+    text = "".join(f"line number {n}\n" for n in range(2000))
+    cut = gzip.compress(text.encode())[:400]
+    headers = {**HTML, "content-encoding": "gzip"}
+    result = decode_body(cut, headers, partial=True, wire_truncated=True)
+    assert result.truncated is True and result.text.startswith("line number 0\n") and 0 < len(result.text) < len(text)
+    assert decode_body(cut, headers).error_kind == "decode"          # the default mode still refuses
+
+
+def test_partial_mode_works_for_both_kinds_of_deflate():
+    text = "".join(f"line number {n}\n" for n in range(2000)).encode()
+    wrapped = zlib.compress(text)[:300]
+    engine = zlib.compressobj(wbits=-15)
+    raw = (engine.compress(text) + engine.flush())[:300]
+    for body in (wrapped, raw):
+        result = decode_body(body, {**HTML, "content-encoding": "deflate"}, partial=True, wire_truncated=True)
+        assert result.truncated is True and result.text.startswith("line number 0\n")
+
+
+def test_a_character_cut_in_two_at_the_end_does_not_send_the_page_to_cp1252():
+    body = ("é" * 100).encode("utf-8")                    # 200 bytes
+    result = decode_body(body, {"content-type": "text/html"}, limit=101, partial=True)
+    assert result.text == "é" * 50 and result.truncated is True
+    assert (result.charset_used, result.charset_source) == ("utf-8", "default-utf8")
+
+
+def test_an_odd_cut_in_utf16_is_dropped_too():
+    body = "ab".encode("utf-16")                          # BOM + 2 characters
+    result = decode_body(body + b"\x00" * 3, {"content-type": "text/html"}, limit=len(body) + 1, partial=True)
+    assert result.text.startswith("ab") and result.truncated is True
+
+
+def test_partial_mode_never_raises_on_garbage():
+    rng = random.Random(21)
+    for _ in range(300):
+        body = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 80)))
+        headers = {"content-type": rng.choice(["text/html", "text/plain; charset=ISO-8852", ""]),
+                   "content-encoding": rng.choice(["", "gzip", "deflate", "br"])}
+        result = decode_body(body, headers, limit=rng.choice([5, 30, 1000]), partial=True)
+        assert isinstance(result, DecodedBody)
+        assert (result.text is None) != (result.error_kind is None)
+
+
+def test_a_gzip_stream_that_ends_early_without_a_wire_cut_is_a_broken_stream_even_in_partial_mode():
+    """Partial mode forgives only a cut WE made at the cap, never a damaged download."""
+    cut = gzip.compress(("line number 1\n" * 3000).encode())[:-20]
+    result = decode_body(cut, {**HTML, "content-encoding": "gzip"}, partial=True)
+    assert result.error_kind == "decode" and "cut short" in result.error_message
+
+
+def test_a_character_cut_in_two_at_the_wire_cut_is_dropped_and_utf8_is_kept():
+    body = ("é" * 10).encode("utf-8")[:-1]
+    result = decode_body(body, {"content-type": "text/html"}, partial=True, wire_truncated=True)
+    assert result.text == "é" * 9 and result.charset_source == "default-utf8" and result.truncated is True
+
+
+def test_without_the_wire_cut_flag_the_same_bytes_fall_back_to_cp1252():
+    body = ("é" * 10).encode("utf-8")[:-1]
+    assert decode_body(body, {"content-type": "text/html"}, partial=True).charset_source == "fallback-cp1252"

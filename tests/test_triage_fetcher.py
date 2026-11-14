@@ -23,6 +23,7 @@ from tracker.triage.contract import ERROR_KINDS, BlockInfo, ContractError, Triag
 from tracker.triage.fetch_result import FetchResult
 from tracker.triage.fetcher import Fetcher
 from tracker.triage.robots import RobotsRules
+from tracker.triage.sitemap import read_sitemap
 from tracker.triage.transport import RawResponse, TransportError
 
 UA = "InternshipTracker/0.1 (triage; contact test@example.com)"
@@ -554,3 +555,105 @@ def test_a_robots_redirect_to_a_broken_address_is_reported_not_fatal():
     result = make(transport)[0].fetch(PAGE)
     assert result.status == "failed" and result.error.kind == "redirect_loop"
     assert "unusable redirect" in result.error.message
+
+
+# -- allow_truncated: keep the first 2 MB of a big body (for sitemaps) ---------------------------------------------------
+
+def test_a_body_cut_at_the_cap_is_a_failure_by_default_and_the_start_of_the_text_when_allowed():
+    cut = RawResponse(200, {"content-type": "text/html"}, b"<p>first part of a very big page", True)
+    transport = simple(cut)
+    default = make(transport)[0].fetch(PAGE)
+    assert default.error.kind == "too_large" and default.truncated is False
+    allowed = make(simple(cut))[0].fetch(PAGE, allow_truncated=True)
+    assert allowed.status == "ok" and allowed.truncated is True
+    assert allowed.text == "<p>first part of a very big page" and allowed.http_status == 200
+
+
+def test_a_character_cut_in_two_by_the_cap_still_decodes_as_utf8():
+    body = ("é" * 10).encode("utf-8")[:-1]
+    cut = RawResponse(200, {"content-type": "text/html"}, body, True)
+    result = make(simple(cut))[0].fetch(PAGE, allow_truncated=True)
+    assert result.text == "é" * 9 and result.charset_source == "default-utf8"
+
+
+def test_a_compressed_body_cut_at_the_cap_gives_the_text_so_far():
+    text = "".join(f"line number {n}\n" for n in range(5000))
+    wire = gzip.compress(text.encode())
+    cut = RawResponse(200, {"content-type": "text/plain", "content-encoding": "gzip"}, wire[: len(wire) // 2], True)
+    result = make(simple(cut))[0].fetch(PAGE, allow_truncated=True)
+    assert result.status == "ok" and result.truncated is True and result.text.startswith("line number 0\n")
+    assert make(simple(cut))[0].fetch(PAGE).error.kind == "too_large"
+
+
+def test_a_small_compressed_body_that_expands_past_the_cap_is_cut_to_the_cap_when_allowed():
+    big = gzip.compress(b"a" * (3 * 1024 * 1024))
+    page = RawResponse(200, {"content-type": "text/plain", "content-encoding": "gzip"}, big, False)
+    default = make(simple(page))[0].fetch(PAGE)
+    assert default.error.kind == "too_large"
+    allowed = make(simple(page))[0].fetch(PAGE, allow_truncated=True)
+    assert allowed.status == "ok" and allowed.truncated is True and len(allowed.text) == 2 * 1024 * 1024
+
+
+def test_a_normal_page_is_not_truncated_even_when_truncation_is_allowed():
+    result = make(simple())[0].fetch(PAGE, allow_truncated=True)
+    assert result.status == "ok" and result.truncated is False
+
+
+def test_robots_txt_is_never_read_in_part():
+    cut = RawResponse(200, {"content-type": "text/plain"}, b"User-agent: *\nDisallow:", True)
+    result = make(simple(robots=cut))[0].fetch(PAGE, allow_truncated=True)
+    assert result.status == "failed" and result.error.kind == "too_large" and "robots" in result.error.message
+
+
+def test_other_failures_are_unchanged_when_truncation_is_allowed():
+    assert make(simple(reply(404)))[0].fetch(PAGE, allow_truncated=True).error.kind == "http_4xx"
+    assert make(simple(reply(403)))[0].fetch(PAGE, allow_truncated=True).status == "blocked"
+
+
+def test_only_an_ok_fetch_can_be_marked_truncated():
+    with pytest.raises(ContractError):
+        FetchResult(PAGE, PAGE, "failed", error=ERR, truncated=True)
+    with pytest.raises(ContractError):
+        FetchResult(PAGE, PAGE, "blocked", block=BLK, truncated=True)
+    assert FetchResult(PAGE, PAGE, "ok", text="x", truncated=True).truncated is True
+
+
+# -- a sitemap cut at the cap flows through the fetcher into the sitemap reader --------------------------------------------
+
+SITEMAP_URL = "https://x.test/sitemap.xml"
+
+
+def cut_sitemap_answer() -> RawResponse:
+    entries = "".join(f"<url><loc>https://x.test/jobs/view/{n}</loc></url>" for n in range(10))
+    text = f'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{entries}</urlset>'
+    cut = text[: text.index("/jobs/view/9") + 5]                      # ends inside the last <loc>
+    return RawResponse(200, {"content-type": "application/xml"}, cut.encode(), True)
+
+
+def test_a_sitemap_cut_at_the_cap_is_read_as_far_as_it_goes():
+    transport = FakeTransport().add(ROBOTS, robots_ok()).add(SITEMAP_URL, cut_sitemap_answer())
+    fetcher, _ = make(transport)
+    result = fetcher.fetch(SITEMAP_URL, allow_truncated=True)
+    assert result.status == "ok" and result.truncated is True
+    found = read_sitemap(result.final_url, result.text, "https://x.test/jobs/view/100")
+    assert len(found.urls) == 9 and found.job_url_count == 9 and found.evidence[0].kind == "sitemap_jobs"
+
+
+def test_the_same_cut_sitemap_is_a_failure_when_truncation_is_not_allowed():
+    transport = FakeTransport().add(ROBOTS, robots_ok()).add(SITEMAP_URL, cut_sitemap_answer())
+    assert make(transport)[0].fetch(SITEMAP_URL).error.kind == "too_large"
+
+
+def test_a_cut_robots_file_stays_a_failure_even_when_the_page_fetch_allows_truncation():
+    cut_robots = RawResponse(200, {"content-type": "text/plain"}, b"User-agent: *\nDisallow: /pri", True)
+    transport = FakeTransport().add(ROBOTS, cut_robots).add(PAGE, reply(200, "page"))
+    result = make(transport)[0].fetch(PAGE, allow_truncated=True)
+    assert result.status == "failed" and result.error.kind == "too_large" and "robots.txt" in result.error.message
+
+
+def test_a_truncated_fetch_replays_identically_from_the_cache(tmp_path):
+    cache = ResponseCache(tmp_path / "c")
+    transport = FakeTransport().add(ROBOTS, robots_ok()).add(SITEMAP_URL, cut_sitemap_answer())
+    first = make(RecordingTransport(transport, cache, clock=lambda: "t"))[0].fetch(SITEMAP_URL, allow_truncated=True)
+    second = Fetcher(ReplayTransport(cache), UA, sleep=lambda s: None).fetch(SITEMAP_URL, allow_truncated=True)
+    assert second == first and second.truncated is True

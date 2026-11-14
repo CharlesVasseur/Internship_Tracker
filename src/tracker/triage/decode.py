@@ -13,6 +13,12 @@ TriageError. Error kinds used here: "not_text", "too_large", "decode", and "inte
 An unknown charset name (for example "ISO-8852", seen at Banque de France) is
 skipped, never fatal: we move on to the next candidate and write it down.
 
+PARTIAL MODE. Normally a body over the size cap is an error (too_large). With
+partial=True we keep the first `limit` bytes instead and say so (truncated=True):
+a very big sitemap can still be read as far as the cap. A compressed body that is
+cut short is read as far as it goes. A multi-byte character cut in two at the end
+is dropped, so it cannot spoil the charset choice.
+
 Pure Python standard library. No network access in this file.
 """
 
@@ -51,6 +57,7 @@ class DecodedBody:
     charset_note: str | None = None     # what was skipped or approximated, if anything
     error_kind: str | None = None       # not_text / too_large / decode / internal
     error_message: str | None = None
+    truncated: bool = False             # only in partial mode: the text is just the start of the body
 
     def __post_init__(self) -> None:
         if (self.text is None) == (self.error_kind is None):
@@ -88,37 +95,51 @@ class _BodyProblem(Exception):
         self.message = message
 
 
-def _inflate(data: bytes, wbits: int, limit: int) -> bytes:
-    """Decompress with a cap. wbits: 31 = gzip, 15 = zlib-wrapped deflate, -15 = raw deflate."""
+def _inflate(data: bytes, wbits: int, limit: int, partial: bool, wire_truncated: bool) -> tuple[bytes, bool]:
+    """Decompress with a cap. wbits: 31 = gzip, 15 = zlib-wrapped deflate, -15 = raw deflate.
+
+    Returns (bytes, truncated). Truncation is only reported in partial mode; otherwise
+    an oversized or cut-short body is an error. A stream that ends early is forgiven only
+    if the transport cut the wire itself (wire_truncated); otherwise it is a broken stream.
+    """
     engine = zlib.decompressobj(wbits)
     try:
         out = engine.decompress(data, limit + 1)   # at most limit+1 bytes come out
     except zlib.error as exc:
         raise _BodyProblem("decode", f"cannot decompress body: {exc}") from exc
     if len(out) > limit:
+        if partial:
+            return out[:limit], True
         raise _BodyProblem("too_large", f"body is larger than {limit} bytes after decompression")
     if not engine.eof:
+        if partial and wire_truncated:
+            return out, True
         raise _BodyProblem("decode", "compressed body is cut short (stream not finished)")
-    return out
+    return out, False
 
 
-def decompress(body: bytes, content_encoding: str, limit: int = MAX_BODY_BYTES) -> bytes:
-    """Undo Content-Encoding. Raises _BodyProblem; only decode_body calls this."""
+def decompress(
+    body: bytes, content_encoding: str, limit: int = MAX_BODY_BYTES, partial: bool = False,
+    wire_truncated: bool = False,
+) -> tuple[bytes, bool]:
+    """Undo Content-Encoding. Returns (bytes, truncated). Raises _BodyProblem; only decode_body calls this."""
     encoding = content_encoding.strip().lower()
     if encoding in ("", "identity"):
         if len(body) > limit:
+            if partial:
+                return body[:limit], True
             raise _BodyProblem("too_large", f"body is larger than {limit} bytes")
-        return body
+        return body, False
     if encoding in ("gzip", "x-gzip"):
-        return _inflate(body, 31, limit)
+        return _inflate(body, 31, limit, partial, wire_truncated)
     if encoding == "deflate":
         # Servers disagree: some send zlib-wrapped data, some raw deflate. Try both.
         try:
-            return _inflate(body, 15, limit)
+            return _inflate(body, 15, limit, partial, wire_truncated)
         except _BodyProblem as first:
             if first.kind == "too_large":
                 raise
-            return _inflate(body, -15, limit)
+            return _inflate(body, -15, limit, partial, wire_truncated)
     raise _BodyProblem("decode", f"unsupported Content-Encoding {content_encoding!r}")
 
 
@@ -148,7 +169,21 @@ def _meta_charset(body: bytes) -> str | None:
     return _header_charset(head) if "http-equiv" in head.lower() else None
 
 
-def decode_text(body: bytes, content_type: str = "") -> DecodedBody:
+def _decode(body: bytes, name: str, truncated: bool) -> str:
+    """body.decode(name). A cut body may end inside a character: drop up to 3 trailing bytes."""
+    if not truncated:
+        return body.decode(name)
+    problem: UnicodeDecodeError | None = None
+    for cut in range(4):
+        try:
+            return body[: len(body) - cut].decode(name)
+        except UnicodeDecodeError as error:
+            problem = error
+    assert problem is not None
+    raise problem
+
+
+def decode_text(body: bytes, content_type: str = "", truncated: bool = False) -> DecodedBody:
     """Find a charset that works. Order: header, BOM, <meta>, UTF-8, cp1252."""
     candidates: list[tuple[str, str]] = []   # (source, charset name)
     for source, name in (
@@ -168,7 +203,7 @@ def decode_text(body: bytes, content_type: str = "") -> DecodedBody:
             continue
         tried.add(key)
         try:
-            text = body.decode(name)
+            text = _decode(body, name, truncated)
         except LookupError:       # unknown name, or a codec that is not a text encoding
             skipped.append(f"{source} charset {name!r} is unknown")
             continue
@@ -177,7 +212,7 @@ def decode_text(body: bytes, content_type: str = "") -> DecodedBody:
             continue
         return DecodedBody(
             text=text.lstrip("\ufeff"), charset_used=name, charset_source=source,
-            charset_note="; ".join(skipped) or None,
+            charset_note="; ".join(skipped) or None, truncated=truncated,
         )
 
     # Last resort: cp1252, which is what old Western European pages usually are.
@@ -190,7 +225,7 @@ def decode_text(body: bytes, content_type: str = "") -> DecodedBody:
         note = "; ".join(skipped + [f"used cp1252 as a fallback with {count} replaced character(s)"])
     return DecodedBody(
         text=text.lstrip("\ufeff"), charset_used="cp1252", charset_source="fallback-cp1252",
-        charset_note=note,
+        charset_note=note, truncated=truncated,
     )
 
 
@@ -200,11 +235,16 @@ def decode_text(body: bytes, content_type: str = "") -> DecodedBody:
 
 
 def decode_body(
-    body: bytes, headers: dict[str, str], limit: int = MAX_BODY_BYTES
+    body: bytes, headers: dict[str, str], limit: int = MAX_BODY_BYTES, partial: bool = False,
+    wire_truncated: bool = False,
 ) -> DecodedBody:
     """Bytes plus headers in, text or a typed problem out. Never raises.
 
-    `headers` is read case-insensitively.
+    `headers` is read case-insensitively. With partial=True a body over `limit` gives the
+    start of the text with truncated=True. `wire_truncated` says the transport itself cut
+    the body at the cap: then a compressed stream that ends early is read as far as it goes,
+    and a character cut in two at the end is dropped. Without it, a stream that ends early
+    is a decode error (it is broken, not cut by us).
     """
     try:
         lowered = {key.lower(): value for key, value in headers.items()}
@@ -212,8 +252,8 @@ def decode_body(
         if not is_text_type(content_type):
             main = content_type.split(";", 1)[0].strip()
             return _fail("not_text", f"Content-Type is {main!r}, which is not text")
-        raw = decompress(body, lowered.get("content-encoding", ""), limit)
-        return decode_text(raw, content_type)
+        raw, cut = decompress(body, lowered.get("content-encoding", ""), limit, partial, wire_truncated)
+        return decode_text(raw, content_type, truncated=cut or (partial and wire_truncated))
     except _BodyProblem as problem:
         return _fail(problem.kind, problem.message)
     except Exception as exc:   # a bug in this file: report it, do not crash the run

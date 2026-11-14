@@ -78,8 +78,11 @@ def test_real_sitemap_is_read_as_expected(case):
 
 
 @pytest.mark.parametrize("case", cases("terms"), ids=lambda case: case["file"])
-def test_real_terms_page_is_flagged_with_the_known_clause(case):
+def test_real_terms_page_gives_the_expected_flag(case):
     flag = analyze_terms(case["page_url"], read(case["file"]))
     assert flag.status == case["expect_status"]
     assert flag.language_guess == case["expect_language"]
-    assert any(case["expect_quote_contains"] in quote for quote in flag.quotes)
+    if case["expect_quote_contains"]:
+        assert any(case["expect_quote_contains"] in quote for quote in flag.quotes)
+    else:
+        assert flag.quotes == ()                      # a real page with no ban on automated access

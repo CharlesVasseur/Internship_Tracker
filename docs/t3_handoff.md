@@ -40,21 +40,23 @@ changes the verdict.
 
 | Item | When |
 |---|---|
-| Give the fetcher an option to keep the first 2 MB of a body (`allow_truncated`, with a `truncated` flag on `FetchResult`), because the spec reads only the first 2 MB of a sitemap and the fetcher currently fails a larger body as `too_large` | right before T4 |
+| DONE 14 Nov 2026: `fetch(url, allow_truncated=True)` keeps the first 2 MB of a body and marks the result `truncated=True`; T4 uses it for the sitemap fetch only | done |
 | Spec approval pending: the terms list rule (a prohibition in a lead-in sentence ending in ":" applies to the items under it, up to 25 sentences) | before T4 |
 | CLI flags `--contact`, `--cache-dir`, `--replay`; one guard per firm; 90 s and 10 requests per firm; JSONL line per firm; `--resume`; the `api_url` note evidence; choosing the mode from the evidence | T4 |
 | First live run: `urllib_transport` has never run against a real site | T6 |
-| Replace two wrong terms captures (two accessibility statements were saved instead of terms pages) | when the author has the pages |
+| A real Spanish terms page: the saved "Normativa legal" page is only an index of links; the likely terms page is the footer link "Advertencias" | when the author has it |
 
 ## What is verified on real pages, and what is not
 
-Real captures (local only, in `tests/local_fixtures/`): 3 listing pages, 2 sitemaps, 3 terms pages.
+Real captures (local only, in `tests/local_fixtures/`): 3 listing pages, 2 sitemaps, 4 terms pages.
 
 - Verified: the job-link shape rule (32, 72 and 100 links), the app-shell marker, vendor hosts on two
   pages, reading a real sitemap and an empty one, and three real bans on automated access (one French
-  and two English; one written as a list, which exposed and fixed a gap).
+  and two English; one written as a list, which exposed and fixed a gap), plus one real French terms
+  page with no ban on automated access (a correct "not flagged"; it comes from a group's international
+  site, not the careers site).
 - NOT verified: JSON-LD on a real job page, feed reading (synthetic feeds only), a sitemap index,
-  terms pages in Spanish, German, Dutch, Portuguese and Italian, and precision on a real "no ban" terms
+  terms pages in Spanish, German, Dutch, Portuguese and Italian, and precision beyond one real "no ban"
   page. The language-guess thresholds (12% and 1.25) and the list reach (25 sentences, 500 characters)
   are first guesses, not tuned.
 

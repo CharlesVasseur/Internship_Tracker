@@ -101,18 +101,23 @@ class Fetcher:
         known = self._robots.get(_origin(url) or "")
         return known if isinstance(known, RobotsRules) else None
 
-    def fetch(self, url: str) -> FetchResult:
-        """Fetch one URL. Never raises."""
+    def fetch(self, url: str, *, allow_truncated: bool = False) -> FetchResult:
+        """Fetch one URL. Never raises.
+
+        A body over the 2 MB cap is normally a failure (too_large). With
+        allow_truncated=True the first 2 MB are read instead and the result says
+        so (truncated=True): this is for sitemaps, where the start of the file is enough.
+        """
         start = len(self._log)
         try:
-            return self._fetch(url, start)
+            return self._fetch(url, start, allow_truncated)
         except Exception as exc:   # a bug or a broken cache entry: report it, keep the run alive
             error = TriageError.of("internal", f"{type(exc).__name__}: {exc}", url)
             return FetchResult(url, url, "failed", error=error, requests=tuple(self._log[start:]))
 
     # -- the page, with redirects ------------------------------------------------------
 
-    def _fetch(self, url: str, start: int) -> FetchResult:
+    def _fetch(self, url: str, start: int, allow_truncated: bool = False) -> FetchResult:
         current = url
         chain: list[str] = []
         visited = {url}
@@ -148,12 +153,15 @@ class Fetcher:
                 current = target
                 continue
 
-            return self._finish(url, current, chain, raw, start)
+            return self._finish(url, current, chain, raw, start, allow_truncated)
 
         return self._failed(url, current, chain, start, TriageError.of(
             "internal", "redirect loop ended without a result (bug)", current))
 
-    def _finish(self, url: str, current: str, chain: list[str], raw: RawResponse, start: int) -> FetchResult:
+    def _finish(
+        self, url: str, current: str, chain: list[str], raw: RawResponse, start: int,
+        allow_truncated: bool = False,
+    ) -> FetchResult:
         """An answer that is not a redirect: check the status, then read the body."""
         status = raw.status
         if 400 <= status < 500:
@@ -162,10 +170,10 @@ class Fetcher:
         if not 200 <= status < 300:
             return self._failed(url, current, chain, start, TriageError.of(
                 "internal", f"unexpected HTTP status {status}", current), status)
-        if raw.truncated:
+        if raw.truncated and not allow_truncated:
             return self._failed(url, current, chain, start, TriageError.of(
                 "too_large", "the body is larger than the size cap", current), status)
-        decoded = decode_body(raw.body, raw.headers)
+        decoded = decode_body(raw.body, raw.headers, partial=allow_truncated, wire_truncated=raw.truncated)
         if decoded.error_kind is not None:
             return self._failed(url, current, chain, start, TriageError.of(
                 decoded.error_kind, decoded.error_message or decoded.error_kind, current), status)
@@ -175,6 +183,7 @@ class Fetcher:
             charset_used=decoded.charset_used, charset_source=decoded.charset_source,
             charset_note=decoded.charset_note, redirect_chain=tuple(chain),
             requests=tuple(self._log[start:]),
+            truncated=allow_truncated and (raw.truncated or decoded.truncated),
         )
 
     def _failed(

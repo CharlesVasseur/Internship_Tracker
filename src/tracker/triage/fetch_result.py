@@ -37,6 +37,7 @@ class FetchResult:
     error: TriageError | None = None          # only when status == "failed"
     block: BlockInfo | None = None            # only when status == "blocked"
     requests: tuple[str, ...] = ()            # every URL actually requested during this fetch
+    truncated: bool = False                   # ok only: the text is just the start of a body over the size cap
 
     def __post_init__(self) -> None:
         if self.status not in FETCH_STATUSES:
@@ -44,6 +45,8 @@ class FetchResult:
         if not isinstance(self.redirect_chain, tuple) or not isinstance(self.requests, tuple):
             raise ContractError("redirect_chain and requests must be tuples")
         has_text = self.text is not None
+        if self.truncated and self.status != "ok":
+            raise ContractError("only an ok fetch can be truncated")
         if self.status == "ok" and (not has_text or self.error or self.block):
             raise ContractError("an ok fetch has text and no error or block")
         if self.status == "failed" and (self.error is None or has_text or self.block):
