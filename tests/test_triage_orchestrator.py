@@ -477,3 +477,130 @@ def test_every_result_survives_the_json_round_trip():
 def test_the_robots_rules_are_recorded_as_evidence():
     result = Setup().site(jobs_page()).run()
     assert details(result, "robots") and result.evidence[0].kind == "robots"
+
+
+# -- T4.2b: manual / js-only is never concluded while a step that could change it did not complete ----------------------------
+
+SHELL = '<html><body><div id="root"></div></body></html>'
+FEED_LINK = f'<head><link rel="alternate" type="application/rss+xml" href="{HOST}/feed.xml"></head><body>'
+
+
+def notes_of(result):
+    return " ".join(details(result, "note"))
+
+
+def test_js_only_with_a_failed_example_job_page_is_unresolved_not_manual():
+    s = Setup().site(SHELL, job=None)
+    s.transport.add(EXAMPLE, reply(404, "gone"))
+    result = s.run()
+    assert (result.status, result.mode, result.verdict) == ("failed", "unknown", "unresolved")
+    assert result.error.kind == "http_4xx" and not result.error.retryable
+    assert "spa_shell" in kinds(result) and "robots" in kinds(result)          # the evidence is kept
+    assert "example job page did not complete (http_4xx)" in notes_of(result)
+    assert "a person checks this firm by hand" not in notes_of(result)
+
+
+def test_manual_with_a_job_page_that_times_out_is_a_retryable_failure():
+    s = Setup().site(PLAIN_PAGE, job=None)
+    s.transport.add(EXAMPLE, TransportError("timeout", "slow"))
+    result = s.run()
+    assert (result.status, result.error.kind, result.error.retryable) == ("failed", "timeout", True)
+
+
+def test_manual_with_a_refused_job_page_is_blocked_with_that_reason():
+    s = Setup().site(PLAIN_PAGE, job=None)
+    s.transport.add(EXAMPLE, reply(403, "no"))
+    result = s.run()
+    assert (result.status, result.mode, result.verdict) == ("blocked", "blocked", "blocked")
+    assert result.block.reason == "http_403" and result.block.url == EXAMPLE
+
+
+def test_manual_with_a_job_page_disallowed_by_robots_is_blocked():
+    s = Setup().site(PLAIN_PAGE, job=None, robots="User-agent: *\nDisallow: /jobs/")
+    result = s.run()
+    assert (result.status, result.block.reason) == ("blocked", "robots_disallow")
+    assert EXAMPLE not in result.requests
+
+
+def test_manual_with_a_failed_feed_is_unresolved():
+    s = Setup().site(PLAIN_PAGE.replace("<body>", FEED_LINK))
+    s.transport.add(HOST + "/feed.xml", reply(404, "gone"))
+    result = s.run()
+    assert (result.status, result.error.kind, result.verdict) == ("failed", "http_4xx", "unresolved")
+    assert "feed did not complete" in notes_of(result)
+
+
+def test_manual_with_a_failed_sitemap_is_unresolved():
+    s = Setup().site(PLAIN_PAGE, robots=f"{ALLOW_ALL}\nSitemap: {SITEMAP}")
+    s.transport.add(SITEMAP, reply(404, "gone"))
+    result = s.run()
+    assert (result.status, result.error.kind) == ("failed", "http_4xx")
+    assert "sitemap did not complete" in notes_of(result)
+
+
+def test_manual_with_a_sitemap_disallowed_by_robots_is_blocked():
+    s = Setup().site(PLAIN_PAGE, robots=f"User-agent: *\nDisallow: /sitemap\nSitemap: {SITEMAP}")
+    result = s.run()
+    assert (result.status, result.block.reason) == ("blocked", "robots_disallow")
+
+
+def test_a_skipped_step_because_of_the_request_budget_makes_manual_unresolved():
+    s = Setup().site(PLAIN_PAGE, job=PLAIN_PAGE)
+    result = s.run(max_requests=2)
+    assert (result.status, result.error.kind, result.error.retryable) == ("failed", "budget", True)
+    assert EXAMPLE not in result.requests and result.verdict == "unresolved"
+
+
+def test_a_skipped_step_because_of_the_time_budget_makes_js_only_unresolved():
+    s = Setup()
+    s.transport.add(ROBOTS, robots_ok())
+    s.transport.add(LISTING, TransportError("timeout", "slow"), TransportError("timeout", "slow"), reply(200, SHELL))
+    result = s.run(max_seconds=5)
+    assert (result.status, result.error.kind) == ("failed", "budget")
+    assert "time budget used up" in result.error.message
+
+
+def test_the_first_incomplete_step_in_step_order_gives_the_error():
+    s = Setup().site(PLAIN_PAGE.replace("<body>", FEED_LINK), job=None, robots=f"{ALLOW_ALL}\nSitemap: {SITEMAP}")
+    s.transport.add(EXAMPLE, reply(404, "gone")).add(HOST + "/feed.xml", TransportError("timeout", "slow"))
+    s.transport.add(SITEMAP, reply(404, "gone"))
+    result = s.run()
+    assert result.error.kind == "http_4xx" and result.error.url == EXAMPLE            # the job page comes first
+    assert HOST + "/feed.xml" in result.requests and SITEMAP in result.requests        # later steps still ran
+
+
+@pytest.mark.parametrize("page, job, expected_mode", [(PLAIN_PAGE, PLAIN_PAGE, "manual"), (SHELL, PLAIN_PAGE, "js-only")])
+def test_honest_not_founds_stay_manual_or_js_only(page, job, expected_mode):
+    result = Setup().site(page, job=job).run()                  # no feed link, no Sitemap line: pages read, nothing found
+    assert (result.status, result.mode, result.verdict) == ("ok", expected_mode, "manual")
+
+
+def test_no_example_url_is_an_honest_not_found_not_an_incomplete_step():
+    result = Setup().site(PLAIN_PAGE, job=None).run(firm(example_job_url=None))
+    assert (result.status, result.mode) == ("ok", "manual")
+
+
+def test_a_failed_terms_page_never_makes_a_manual_firm_unresolved():
+    s = Setup().site(PLAIN_PAGE)
+    s.transport.add(TERMS, reply(404, "gone"))
+    result = s.run(firm(terms_url=TERMS))
+    assert (result.status, result.mode) == ("ok", "manual") and result.terms.status == "not_assessed"
+
+
+@pytest.mark.parametrize("page, expected", [(jobs_page(), "html"), (PLAIN_PAGE.replace(
+    "About</a>", "About</a><a href='https://acme.myworkdayjobs.com/en/site'>Jobs</a>"), "vendor")])
+def test_a_firm_with_a_counting_verdict_stays_ok_when_a_step_fails(page, expected):
+    s = Setup().site(page, job=None)
+    s.transport.add(EXAMPLE, reply(404, "gone"))
+    result = s.run()
+    assert (result.status, result.mode, result.verdict) == ("ok", expected, "probable")
+    assert "example job page not read" in notes_of(result)
+
+
+def test_an_unresolved_result_still_carries_the_terms_flag_and_the_requests():
+    s = Setup().site(SHELL, job=None)
+    s.transport.add(EXAMPLE, reply(404, "gone")).add(TERMS, reply(200, f"<html><body>{BAN}</body></html>"))
+    result = s.run(firm(terms_url=TERMS))
+    assert result.terms.status == "flagged"
+    assert result.requests == (ROBOTS, LISTING, EXAMPLE, TERMS)
+    assert TriageResult.from_json(result.to_json()) == result

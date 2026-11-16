@@ -19,9 +19,17 @@ visible note, once the request or time budget is used up):
        is a sitemap index, the first child is read.
     7. The terms-of-use page: flagged and quoted, never judged.
 
-A failure in steps 3 to 7 never changes the firm's status. It becomes a `note`
-that says what could not be read and why. A failed or blocked check is never
-an answer about the firm ("no openings", "not monitorable").
+A failure in steps 3 to 7 becomes a `note` that says what could not be read and
+why. It changes the status in ONE case (decided 16 Nov 2026): the firm would end
+up `manual` or `js-only` ("not monitorable", which does not count towards the
+gate) while the example job page, the feed or the sitemap did not complete
+(failed, refused, or skipped because a budget ran out). Those steps could have
+found a way to monitor the firm, so a failed or blocked check must not become
+an answer about it. The result is then `failed` (that step's error, or `budget`)
+or `blocked` (that step's block), with the evidence kept: verdict unresolved or
+blocked, never manual. The terms step cannot change a verdict, so it never
+counts. If the firm already has a verdict that counts (probable, automatic),
+the status stays ok and the note says what was missed.
 
 The MODE comes from the evidence, with the spec's priority:
     feed, json-ld, json-api, vendor, html, js-only, manual.
@@ -47,7 +55,7 @@ import time
 import urllib.parse
 from typing import Callable, Iterable
 
-from tracker.triage.contract import Evidence, FirmInput, TermsFlag, TriageError, TriageResult
+from tracker.triage.contract import BlockInfo, Evidence, FirmInput, TermsFlag, TriageError, TriageResult
 from tracker.triage.fetch_result import FetchResult
 from tracker.triage.fetcher import Fetcher
 from tracker.triage.html_scan import PageScan, scan_html
@@ -112,6 +120,9 @@ class _Work:
         self.max_seconds = max_seconds
         self.evidence: list[Evidence] = []
         self.terms: TermsFlag | None = None
+        # Steps that could have added evidence but did not complete, in step order:
+        # (label, the TriageError or BlockInfo that explains it).
+        self.incomplete: list[tuple[str, TriageError | BlockInfo]] = []
         self._first_request = len(fetcher.request_log)
         self._started = clock()
 
@@ -137,17 +148,22 @@ class _Work:
         if problem is None:
             return True
         self.note(url, f"{label} not fetched: {problem}")
+        self.incomplete.append((label, TriageError.of("budget", f"{label} not fetched: {problem}", url)))
         return False
 
     def failure_note(self, label: str, result: FetchResult) -> None:
         """A secondary fetch that did not work: say so, never hide it."""
         if result.status == "blocked" and result.block is not None:
             why = f"blocked ({result.block.reason})"
+            cause: TriageError | BlockInfo = result.block
         elif result.error is not None:
             why = f"failed ({result.error.kind}): {result.error.message}"
+            cause = result.error
         else:
             why = "no usable answer"
+            cause = TriageError.of("internal", f"{label}: no usable answer", result.url)
         self.note(result.url, f"{label} not read: {why}")
+        self.incomplete.append((label, cause))
 
     # -- the whole run ------------------------------------------------------------------
 
@@ -326,7 +342,21 @@ class _Work:
         if page.status == "failed" and page.error is not None:
             return TriageResult.failed(firm, page.error, self.evidence, terms=terms, requests=requests)
         mode = choose_mode(self.evidence)
+        if mode in ("manual", "js-only") and self.incomplete:
+            return self._unresolved_because_incomplete(mode, terms, requests)
         if mode == "manual":
             self.note(page.final_url, "no feed, JSON-LD JobPosting, known recruiting system or job links "
                                       "found in the raw HTML: a person checks this firm by hand")
         return TriageResult.ok(firm, mode, self.evidence, terms=terms, requests=requests)
+
+    def _unresolved_because_incomplete(
+        self, mode: str, terms: TermsFlag | None, requests: tuple[str, ...]
+    ) -> TriageResult:
+        """The firm looks like manual/js-only, but a step that could change that did not complete."""
+        label, cause = self.incomplete[0]               # the first such step, in step order
+        reason = cause.reason if isinstance(cause, BlockInfo) else cause.kind
+        self.note(cause.url or self.firm.careers_url,
+                  f"{label} did not complete ({reason}): without it this firm cannot be called {mode}")
+        if isinstance(cause, BlockInfo):
+            return TriageResult.blocked(self.firm, cause, self.evidence, terms=terms, requests=requests)
+        return TriageResult.failed(self.firm, cause, self.evidence, terms=terms, requests=requests)
