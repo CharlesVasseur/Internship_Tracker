@@ -49,7 +49,7 @@ rules = fetcher.robots_rules(url)                 # RobotsRules for that site, a
 | `urllib_transport` has **never run against a real site**. No test opens a connection. First live run: check that real exceptions match the typed kinds, and read the first output together | T6 |
 | CLI flags `--contact`, `--cache-dir`, `--replay`; one guard per firm; 90 s budget per firm; 10 requests per firm; JSONL line per firm; `--resume` | T4 |
 | `api_url` hint: add the `note` evidence "api_url provided, not checked in this version" | T4 |
-| Sitemap fetching and the "job-like URLs" rule (needs the real Banque de France and AXA sitemap files) | T3 |
+| Sitemap fetching and the "job-like URLs" rule | T3 |
 | Terms of use flag (item 10), vendor table, job-link counting, JSON-LD, feed detection | T3 |
 | Challenge-page markers (need a real captured page) | T3 |
 | ETag / Last-Modified and the 6-hour refresh limit from the Knowledge Base | later (monitoring, not triage) |

@@ -38,7 +38,7 @@ vendor, html, js-only, manual. Budgets: 10 requests, 90 s per firm, checked betw
 |---|---|
 | First live run: `urllib_transport` has never run against a real site | T6 |
 | Fixtures and extra tests, firm-neutral; run the suite on macOS as well (see the README) | T5 |
-| Fix the firm list: "Cr?dit" lost its accent, Foyer and MAPFRE use the listing URL as the example job URL, CAA has no example job URL | before T6 |
+| Fix the firm list | before T6 |
 | `TriageResult.from_json` raises AttributeError (not ContractError) on a JSON list or number; the runner tolerates it | later, with a test |
 | A real Spanish terms page (MAPFRE "Advertencias"); challenge-page markers need a real capture | when available |
 | Spec rows B1 to B3 in `docs/spec_rows_T4.md` wait for approval | start of T5 |
