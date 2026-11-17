@@ -2,7 +2,7 @@
 
 All byte strings here are SYNTHETIC: tiny made-up bodies that test the decoding
 rules. They are not copies of any real page. The charset name ISO-8852 is a real
-value observed at Banque de France (survey report, section 6).
+value observed on a real page (survey report, section 6).
 """
 
 import gzip

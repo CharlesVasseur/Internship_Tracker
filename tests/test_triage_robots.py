@@ -1,12 +1,12 @@
 """Tests for src/tracker/triage/robots.py (step T2.2). Offline.
 
-The three files in tests/fixtures/http/ are REAL robots.txt files saved from the
-browser (Milliman, AXA, Crédit Agricole). Every other body in this file is
-SYNTHETIC and only tests a rule of the standard.
+Every robots.txt body in this file is SYNTHETIC. The first group below rebuilds, with made-up
+paths and hosts, three situations first seen on real sites during the survey: a wildcard Allow that
+the standard library parser misreads, a Crawl-delay written in lowercase together with a Sitemap
+line, and a Crawl-delay that belongs to another crawler's group.
 """
 
 import random
-from pathlib import Path
 
 import pytest
 
@@ -18,56 +18,75 @@ from tracker.triage.robots import (
     wait_seconds,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures" / "http"
 UA = "InternshipTracker/0.1 (triage; contact test@example.com)"
 TOKEN = agent_token(UA)
-
-
-def real(name: str) -> RobotsRules:
-    return parse_robots((FIXTURES / name).read_text(encoding="utf-8"), TOKEN)
 
 
 def synthetic(text: str) -> RobotsRules:
     return parse_robots(text, TOKEN)
 
 
-# -- the three real files ----------------------------------------------------------
+# -- three situations seen on real sites, rebuilt with made-up data ----------------------
 
-MILLIMAN_LISTING = "https://recruiting2.ultipro.com/MIL1017/JobBoard/f54234e9-dfde-b183-fd20-4fbdb19cba7a/"
+WILDCARD_ALLOW = """\
+User-agent: *
+Disallow: /
+Allow: */careers-board/
+Disallow: */careers-board/*/styles/
+Disallow: */careers-board-view/
+"""
+
+LOWERCASE_DELAY = """\
+User-agent: *
+crawl-delay: 5
+Disallow:
+Sitemap: http://jobs.example.test/sitemap.xml
+"""
+
+DELAY_FOR_ANOTHER_CRAWLER = """\
+User-agent: ExampleBot
+Crawl-delay: 10
+Disallow: /
+
+User-agent: *
+Disallow: /admin/
+Allow: /admin/public.php
+"""
+
+BOARD = "https://jobs.example.test/ACME1/careers-board/0001/"
 
 
-def test_milliman_listing_is_allowed_by_the_wildcard_allow_rule():
+def test_a_wildcard_allow_rule_lets_the_listing_through():
     """The stdlib parser said False here. Under RFC 9309 the longer Allow wins."""
-    rules = real("robots_milliman.txt")
-    assert rules.allowed(MILLIMAN_LISTING) is True
+    assert synthetic(WILDCARD_ALLOW).allowed(BOARD) is True
 
 
-def test_milliman_everything_else_and_the_excluded_paths_stay_disallowed():
-    rules = real("robots_milliman.txt")
-    assert rules.allowed("https://recruiting2.ultipro.com/") is False
-    assert rules.allowed("https://recruiting2.ultipro.com/other/page") is False
-    assert rules.allowed("https://recruiting2.ultipro.com/MIL1017/JobBoard/abc/Styles/x.css") is False
-    assert rules.allowed("https://recruiting2.ultipro.com/MIL1017/JobBoardView/x") is False
+def test_with_that_wildcard_allow_everything_else_and_the_excluded_paths_stay_disallowed():
+    rules = synthetic(WILDCARD_ALLOW)
+    assert rules.allowed("https://jobs.example.test/") is False
+    assert rules.allowed("https://jobs.example.test/other/page") is False
+    assert rules.allowed(BOARD + "styles/x.css") is False
+    assert rules.allowed("https://jobs.example.test/ACME1/careers-board-view/x") is False
 
 
-def test_axa_has_crawl_delay_5_sitemap_line_and_allows_everything():
-    rules = real("robots_axa.txt")
+def test_a_lowercase_crawl_delay_a_sitemap_line_and_an_open_site():
+    rules = synthetic(LOWERCASE_DELAY)
     assert rules.crawl_delay == 5.0                       # written in lowercase in the file
-    assert rules.sitemaps == ("http://careers.axa.com/sitemap.xml",)
-    assert rules.allowed("https://careers.axa.com/jobs/anything") is True
+    assert rules.sitemaps == ("http://jobs.example.test/sitemap.xml",)
+    assert rules.allowed("https://jobs.example.test/jobs/anything") is True
 
 
-def test_credit_agricole_delay_belongs_to_claude_crawlers_not_to_us():
-    rules = real("robots_credit_agricole.txt")
+def test_a_crawl_delay_that_belongs_to_another_crawlers_group_is_not_ours():
+    rules = synthetic(DELAY_FOR_ANOTHER_CRAWLER)
     assert rules.matched_group == "*"
     assert rules.crawl_delay is None
 
 
-def test_credit_agricole_longer_allow_beats_shorter_disallow():
-    rules = real("robots_credit_agricole.txt")
-    assert rules.allowed("https://x.test/offres") is True
-    assert rules.allowed("https://x.test/wp-admin/options.php") is False
-    assert rules.allowed("https://x.test/wp-admin/admin-ajax.php") is True
+def test_a_longer_allow_beats_a_shorter_disallow():
+    rules = synthetic(DELAY_FOR_ANOTHER_CRAWLER)
+    assert rules.allowed("https://x.test/offers") is True
+    assert rules.allowed("https://x.test/admin/options.php") is False
+    assert rules.allowed("https://x.test/admin/public.php") is True
 
 
 # -- matching rules of the standard -------------------------------------------------
@@ -254,7 +273,7 @@ def test_allow_all_is_for_a_missing_robots_file():
 
 
 def test_describe_is_short_and_mentions_the_essentials():
-    line = real("robots_axa.txt").describe()
+    line = synthetic(LOWERCASE_DELAY).describe()
     assert "Crawl-delay 5s" in line and "1 Sitemap line" in line and len(line) < 300
 
 
@@ -268,3 +287,4 @@ def test_random_text_never_raises():
         text = "".join(rng.choice(pieces) for _ in range(rng.randrange(0, 40)))
         rules = parse_robots(text, TOKEN)
         assert isinstance(rules.allowed("https://x.test/a/b?c=1"), bool)
+

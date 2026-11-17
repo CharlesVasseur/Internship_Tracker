@@ -2,7 +2,7 @@
 
 The live request itself is never made here. The opener is replaced by a fake, so
 we test what we wrote: reading, capping, header handling and error typing.
-The SSL message in the tls test is the real one from the survey (SNB, Vaudoise).
+The SSL message in the tls test is the real one from the survey (two surveyed sites).
 """
 
 import http.client

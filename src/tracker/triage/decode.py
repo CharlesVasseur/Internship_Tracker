@@ -10,7 +10,7 @@ Three jobs, in this order:
 holds an error kind and a message. The fetcher (T2.4) turns that into a
 TriageError. Error kinds used here: "not_text", "too_large", "decode", and "internal" for our own bugs.
 
-An unknown charset name (for example "ISO-8852", seen at Banque de France) is
+An unknown charset name (for example "ISO-8852", seen on a real page) is
 skipped, never fatal: we move on to the next candidate and write it down.
 
 PARTIAL MODE. Normally a body over the size cap is an error (too_large). With

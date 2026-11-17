@@ -1,7 +1,7 @@
 """Read robots.txt and decide whether a URL may be fetched (step T2.2).
 
 Why our own matcher: Python's urllib.robotparser reads wildcards literally, so
-Milliman's "Allow: */JobBoard/" never matched and the whole site looked
+a real site's "Allow: */careers-board/" never matched and the whole site looked
 disallowed. This module follows the standard (RFC 9309) instead:
 
     * a rule is a path pattern; "*" matches any characters, "$" at the end

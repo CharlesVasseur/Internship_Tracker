@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: http://careers.axa.com/sitemap.xml
-crawl-delay: 5

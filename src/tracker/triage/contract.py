@@ -370,7 +370,7 @@ class TriageResult:
                 terms=TermsFlag(**{**terms, "quotes": tuple(terms.get("quotes", []))}) if terms else None,
                 requests=tuple(data.get("requests", [])),
             )
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, AttributeError) as exc:
             raise ContractError(f"cannot rebuild a result from this data: {exc}") from exc
 
     @classmethod

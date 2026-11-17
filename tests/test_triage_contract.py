@@ -286,7 +286,7 @@ def test_a_terms_flag_does_not_change_the_verdict():
 
 def full_result():
     return TriageResult.ok(
-        FirmInput("Crédit Agricole", "https://x.test/c", listing_url="https://x.test/l"),
+        FirmInput("Société Exemple", "https://x.test/c", listing_url="https://x.test/l"),
         "json-ld",
         [Evidence("jsonld_jobposting", URL, "title: Stagiaire"), Evidence("job_links", URL, "32 links")],
         terms=TermsFlag(URL, "flagged", quotes=("Les robots sont interdits.",), language_guess="French"),
@@ -304,7 +304,7 @@ def test_json_round_trip_for_every_status():
 def test_json_line_is_one_line_and_keeps_accents_and_verdict():
     line = full_result().to_json()
     assert "\n" not in line
-    assert "Crédit Agricole" in line
+    assert "Société Exemple" in line
     assert json.loads(line)["verdict"] == "automatic"
 
 
