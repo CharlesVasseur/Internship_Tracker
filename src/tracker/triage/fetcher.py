@@ -57,6 +57,7 @@ RETRYABLE_TRANSPORT_KINDS = ("timeout", "connection", "dns")
 BLOCKING_STATUSES = {401: "http_401", 403: "http_403", 429: "http_429"}
 ROBOTS_UNREACHABLE_KINDS = ("timeout", "connection", "http_5xx")   # shown as robots_unreachable
 SILENT_BLOCK_HINT = " (repeated timeouts: the site may be silently blocking us)"
+DEFAULT_PORTS = {"http": 80, "https": 443}              # a URL with its default port is the same site
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class Fetcher:
         self._robots: dict[str, RobotsRules | _Problem] = {}   # by origin, e.g. https://x.test
         self._stopped: dict[str, _Problem] = {}                 # by host: refused us (401/403/429)
         self._last_request: dict[str, float] = {}               # by host: when we last asked
+        self._host_delay: dict[str, float] = {}                 # by host: the longest Crawl-delay any origin asked
         self._log: list[str] = []                               # every URL requested, in order
 
     # -- public ---------------------------------------------------------------------
@@ -235,7 +237,19 @@ class Fetcher:
         if known is None:
             known = self._load_robots(origin)
             self._robots[origin] = known          # a problem is remembered too: no hammering
+            if isinstance(known, RobotsRules):
+                self._remember_delay(_hostname(url), known)
         return known
+
+    def _remember_delay(self, host: str, rules: RobotsRules) -> None:
+        """A Crawl-delay is the wish of a host: it also holds for its other origins (http and https).
+
+        A delay over the cap is not remembered: the page request of that origin already fails
+        with failed/budget, and we never wait that long.
+        """
+        seconds, over_cap = wait_seconds(rules.crawl_delay, cap=self._max_crawl_delay)
+        if not over_cap:
+            self._host_delay[host] = max(seconds, self._host_delay.get(host, 0.0))
 
     def _load_robots(self, origin: str) -> RobotsRules | _Problem:
         robots_url = origin + "/robots.txt"
@@ -291,6 +305,7 @@ class Fetcher:
         host = _hostname(url)
         if host in self._stopped:
             return self._stopped[host]
+        interval = max(interval, self._host_delay.get(host, 0.0))   # also for robots.txt of another origin
         attempts = MAX_RETRIES + 1
         last_kind, last_message = "internal", "no attempt was made"
 
@@ -341,6 +356,9 @@ _AUTHORITY = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://([^/?#]*)")
 def _origin(url: str) -> str | None:
     """'https://host[:port]' for a usable http(s) URL, else None.
 
+    The default port (443 for https, 80 for http) is left out, so "https://host:443/x" and
+    "https://host/x" are the same origin (RFC 9309). Another port stays in the origin.
+
     A space or another control character in the host (a typo such as "exa mple.test") is not usable.
     The raw text is checked, because urlsplit silently deletes tabs and line breaks and would turn
     "exa<tab>mple.test" into a different, valid-looking host.
@@ -355,7 +373,8 @@ def _origin(url: str) -> str | None:
     authority = _AUTHORITY.match(url)
     if authority and any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in authority.group(1)):
         return None
-    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+    keep_port = port and port != DEFAULT_PORTS[parts.scheme]
+    return f"{parts.scheme}://{host}" + (f":{port}" if keep_port else "")
 
 
 def _hostname(url: str) -> str:
@@ -372,3 +391,4 @@ def _robots_problem(problem: _Problem) -> _Problem:
         return _Problem(error=TriageError.of(
             "robots_unreachable", f"robots.txt could not be fetched: {error.message}", error.url))
     return problem
+
