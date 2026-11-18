@@ -1,0 +1,34 @@
+{
+  "description": "JSON-LD on the job page, no job links on the listing, a sitemap with job URLs: json-ld, automatic.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "file": "job.html"
+    },
+    "https://careers.example.test/sitemap.xml": {
+      "file": "sitemap.xml",
+      "content_type": "application/xml"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "json-ld",
+    "verdict": "automatic",
+    "evidence_kinds_include": [
+      "jsonld_jobposting",
+      "sitemap_line",
+      "sitemap_jobs"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "description": "An unusable careers address is a failed result with no request.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": ""
+  },
+  "responses": {},
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "invalid_url",
+    "no_requests": true
+  }
+}

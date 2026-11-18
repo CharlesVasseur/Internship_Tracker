@@ -24,6 +24,7 @@ Pure Python standard library. This file never opens a connection itself.
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -334,14 +335,25 @@ class Fetcher:
 # ---------------------------------------------------------------------------
 
 
+_AUTHORITY = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://([^/?#]*)")
+
+
 def _origin(url: str) -> str | None:
-    """'https://host[:port]' for a usable http(s) URL, else None."""
+    """'https://host[:port]' for a usable http(s) URL, else None.
+
+    A space or another control character in the host (a typo such as "exa mple.test") is not usable.
+    The raw text is checked, because urlsplit silently deletes tabs and line breaks and would turn
+    "exa<tab>mple.test" into a different, valid-looking host.
+    """
     try:
         parts = urllib.parse.urlsplit(url)
         host, port = parts.hostname, parts.port
     except ValueError:
         return None
     if parts.scheme not in ("http", "https") or not host:
+        return None
+    authority = _AUTHORITY.match(url)
+    if authority and any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in authority.group(1)):
         return None
     return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
 

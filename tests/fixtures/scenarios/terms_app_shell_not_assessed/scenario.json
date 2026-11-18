@@ -1,0 +1,30 @@
+{
+  "description": "A terms page built by JavaScript is not_assessed.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1",
+    "terms_url": "https://careers.example.test/terms"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "file": "job.html"
+    },
+    "https://careers.example.test/terms": {
+      "file": "terms.html"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "html",
+    "verdict": "probable",
+    "terms_status": "not_assessed"
+  }
+}

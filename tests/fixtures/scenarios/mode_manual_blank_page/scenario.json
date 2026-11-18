@@ -1,0 +1,24 @@
+{
+  "description": "A page with no text and no links is manual with a note, never empty.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "manual",
+    "verdict": "manual",
+    "notes_include": [
+      "no visible text and no links"
+    ]
+  }
+}

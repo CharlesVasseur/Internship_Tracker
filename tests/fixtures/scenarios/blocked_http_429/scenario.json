@@ -1,0 +1,23 @@
+{
+  "description": "The listing answers 429: blocked, never retried.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "status": 429,
+      "body": "Too many requests"
+    }
+  },
+  "expected": {
+    "status": "blocked",
+    "mode": "blocked",
+    "verdict": "blocked",
+    "block_reason": "http_429"
+  }
+}

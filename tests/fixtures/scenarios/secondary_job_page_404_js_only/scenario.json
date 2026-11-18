@@ -1,0 +1,33 @@
+{
+  "description": "App shell plus a failed example job page: unresolved, never manual.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "status": 404,
+      "body": "Not found"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "http_4xx",
+    "evidence_kinds_include": [
+      "spa_shell"
+    ],
+    "notes_include": [
+      "example job page did not complete"
+    ]
+  }
+}

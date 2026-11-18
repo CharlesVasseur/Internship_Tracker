@@ -1,0 +1,30 @@
+{
+  "description": "No listing URL: the careers URL is the primary page and the listing URL is never requested.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/careers": {
+      "file": "careers.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "file": "job.html"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "html",
+    "verdict": "probable",
+    "requests_include": [
+      "https://careers.example.test/careers"
+    ],
+    "requests_exclude": [
+      "https://careers.example.test/jobs"
+    ]
+  }
+}

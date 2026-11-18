@@ -1,5 +1,5 @@
-"""Repository hygiene (T5.4, gap G13): the .gitignore lines the project relies on, and no firm-specific
-name anywhere in src/ or tests/.
+"""Repository hygiene (T5.4, gap G13; widened in T5.6): the .gitignore lines the project relies on, and no
+firm-specific name anywhere in src/, tests/, docs/ or README.md.
 
 The firm-name check reads the local, git-ignored firm list (survey_input.csv) so that no firm name has
 to be written into the repository to look for it. Without that file (for example on a CI machine) the
@@ -14,7 +14,7 @@ import pytest
 from tracker.triage.firms_csv import InputFileError, read_firms
 
 ROOT = Path(__file__).resolve().parent.parent
-SCANNED_FOLDERS = ("src", "tests")
+SCANNED_PATHS = ("src", "tests", "docs", "README.md")
 SCANNED_SUFFIXES = {".py", ".txt", ".html", ".xml", ".json", ".md", ".csv", ".jsonl"}
 SKIPPED_PARTS = {"local_fixtures", "__pycache__", ".pytest_cache"}
 REQUIRED_IGNORED = ["triage_cache/", "tests/local_fixtures/*", "!tests/local_fixtures/README.md",
@@ -38,11 +38,15 @@ def patterns_for(name: str) -> list[re.Pattern]:
 
 
 def find_names(names: list[str], roots: list[Path]) -> list[str]:
-    """'path: name' for every scanned file that contains one of the names."""
+    """'path: name' for every scanned file that contains one of the names.
+
+    A root is a folder (scanned recursively) or a single file; a root that does not exist is skipped."""
     compiled = [(name, patterns_for(name)) for name in names if name.strip()]
     hits = []
     for root in roots:
-        for path in sorted(root.rglob("*")):
+        if not root.exists():
+            continue
+        for path in [root] if root.is_file() else sorted(root.rglob("*")):
             if not path.is_file() or path.suffix.lower() not in SCANNED_SUFFIXES or SKIPPED_PARTS & set(path.parts):
                 continue
             text = path.read_bytes().decode("utf-8", errors="ignore")
@@ -92,6 +96,14 @@ def test_a_name_inside_another_word_is_not_a_match(tree):
     assert find_names(["Zorblax"], [tree / "src"]) == []
 
 
+def test_a_single_file_root_and_a_docs_folder_are_scanned_and_a_missing_root_is_skipped(tree):
+    (tree / "README.md").write_text("Built for Zorblax Holdings", encoding="utf-8")
+    (tree / "docs").mkdir()
+    (tree / "docs" / "notes.md").write_text("see Zorblax Holdings", encoding="utf-8")
+    hits = find_names(["Zorblax Holdings"], [tree / "README.md", tree / "docs", tree / "missing"])
+    assert len(hits) == 2
+
+
 def test_the_local_fixtures_folder_and_other_file_types_are_not_scanned(tree):
     (tree / "tests" / "local_fixtures" / "real.html").write_text("Zorblax Holdings", encoding="utf-8")
     (tree / "src" / "image.png").write_bytes(b"Zorblax Holdings")
@@ -111,7 +123,7 @@ def test_gitignore_has_the_lines_the_project_relies_on_and_none_is_indented():
     assert not missing, f"add these lines to .gitignore: {missing}"
 
 
-def test_no_firm_name_from_the_local_firm_list_appears_in_src_or_tests():
+def test_no_firm_name_from_the_local_firm_list_appears_in_src_tests_docs_or_readme():
     firm_list = ROOT / "survey_input.csv"
     if not firm_list.exists():
         pytest.skip("survey_input.csv is not on this machine")
@@ -119,5 +131,5 @@ def test_no_firm_name_from_the_local_firm_list_appears_in_src_or_tests():
         names = [firm.name for firm in read_firms(firm_list).firms]
     except InputFileError as error:
         pytest.skip(f"survey_input.csv cannot be read: {error}")
-    hits = find_names(names, [ROOT / folder for folder in SCANNED_FOLDERS])
+    hits = find_names(names, [ROOT / entry for entry in SCANNED_PATHS])
     assert hits == [], "firm-specific text in the repository:\n  " + "\n  ".join(hits)

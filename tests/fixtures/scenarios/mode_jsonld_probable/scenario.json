@@ -1,0 +1,35 @@
+{
+  "description": "JSON-LD on the job page but no source of job URLs (no links, no Sitemap line): json-ld, probable.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "file": "job.html"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "json-ld",
+    "verdict": "probable",
+    "evidence_kinds_include": [
+      "jsonld_jobposting"
+    ],
+    "evidence_kinds_exclude": [
+      "sitemap_jobs",
+      "job_links"
+    ],
+    "notes_include": [
+      "robots.txt has no Sitemap line"
+    ]
+  }
+}

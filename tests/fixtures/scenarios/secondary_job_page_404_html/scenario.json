@@ -1,0 +1,29 @@
+{
+  "description": "A firm that already counts keeps its status when the job page fails.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "status": 404,
+      "body": "Not found"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "html",
+    "verdict": "probable",
+    "notes_include": [
+      "example job page not read"
+    ]
+  }
+}

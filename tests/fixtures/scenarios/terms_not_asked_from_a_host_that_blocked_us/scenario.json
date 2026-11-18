@@ -1,0 +1,31 @@
+{
+  "description": "The host answered 403: it is left alone, so the terms page is not requested and is not_assessed.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "terms_url": "https://careers.example.test/terms"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "status": 403,
+      "body": "Forbidden"
+    },
+    "https://careers.example.test/terms": {
+      "file": "terms.html"
+    }
+  },
+  "expected": {
+    "status": "blocked",
+    "mode": "blocked",
+    "verdict": "blocked",
+    "block_reason": "http_403",
+    "terms_status": "not_assessed",
+    "requests_exclude": [
+      "https://careers.example.test/terms"
+    ]
+  }
+}

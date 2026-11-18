@@ -1,0 +1,24 @@
+{
+  "description": "The listing answers 500 every time: retried, then failed/http_5xx.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "status": 500,
+      "body": "Internal error"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "http_5xx",
+    "retryable": true
+  }
+}

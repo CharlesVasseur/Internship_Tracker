@@ -1,0 +1,28 @@
+{
+  "description": "A link to a known recruiting-system host and nothing else: vendor, probable.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "example_job_url": "https://careers.example.test/jobs/1"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "file": "listing.html"
+    },
+    "https://careers.example.test/jobs/1": {
+      "file": "job.html"
+    }
+  },
+  "expected": {
+    "status": "ok",
+    "mode": "vendor",
+    "verdict": "probable",
+    "evidence_kinds_include": [
+      "vendor_host"
+    ]
+  }
+}

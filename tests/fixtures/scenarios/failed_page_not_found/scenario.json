@@ -1,0 +1,27 @@
+{
+  "description": "The listing answers 404: failed/http_4xx, unresolved, never empty.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "status": 404,
+      "body": "Not found"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "http_4xx",
+    "retryable": false,
+    "evidence_kinds_include": [
+      "robots"
+    ]
+  }
+}

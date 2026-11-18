@@ -1,0 +1,27 @@
+{
+  "description": "A certificate error is one attempt and never retried: failed/tls.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "error": "tls",
+      "message": "certificate verify failed"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "tls",
+    "retryable": false,
+    "requests_include": [
+      "https://careers.example.test/robots.txt"
+    ],
+    "requests_exclude": [
+      "https://careers.example.test/jobs"
+    ]
+  }
+}

@@ -115,11 +115,45 @@ def test_a_sitemap_line_that_is_not_a_usable_address_is_a_note_and_is_never_requ
     assert "sitemap_line" in [item.kind for item in result.evidence]
 
 
-@pytest.mark.parametrize("address", ["http://[bad", "http://[::1", "https://x.test:99999/a", "ftp://x.test/a"])
-def test_a_malformed_address_never_raises_even_in_the_linkedin_check(address):
+UNUSABLE = ["http://[bad", "http://[::1", "https://x.test:99999/a", "ftp://x.test/a",
+            "https://exa mple.test", "https://exa\tmple.test", "https://exa\nmple.test", "https://exa\x01mple.test",
+            "https://exa\u00a0mple.test"]
+
+
+@pytest.mark.parametrize("address", UNUSABLE)
+def test_an_unusable_address_never_raises_even_in_the_linkedin_check(address):
     result = Site().run(firm(careers_url=address, listing_url=None, example_job_url=None))
     assert (result.status, result.error.kind) == ("failed", "invalid_url")
-    assert result.requests == ()
+    assert result.error.retryable is False and result.requests == ()
+
+
+@pytest.mark.parametrize("address", UNUSABLE)
+def test_a_direct_fetch_of_an_unusable_address_makes_no_request(address):
+    s = Site()
+    fetched = s.fetcher.fetch(address)
+    assert (fetched.status, fetched.error.kind) == ("failed", "invalid_url")
+    assert s.transport.calls == []
+
+
+def test_a_tab_inside_a_host_is_not_silently_deleted_into_another_host():
+    s = Site()                                                  # urlsplit alone would read "example.test"
+    s.transport.add("https://example.test/robots.txt", robots_ok(ALLOW_ALL))
+    assert s.fetcher.fetch("https://exa\tmple.test/jobs").error.kind == "invalid_url"
+    assert s.transport.calls == []
+
+
+def test_a_space_in_the_path_is_still_a_usable_address():
+    s = Site().robots()
+    s.transport.add(H + "/jobs/senior analyst", reply(200, PLAIN))
+    assert s.fetcher.fetch(H + "/jobs/senior analyst").ok
+
+
+def test_a_redirect_to_a_host_with_a_space_is_invalid_url_and_is_not_followed():
+    s = Site().robots()
+    s.transport.add(LISTING, RawResponse(301, {"location": "https://exa mple.test/x"}, b"", False))
+    result = s.run(firm(example_job_url=None))
+    assert (result.status, result.error.kind) == ("failed", "invalid_url")
+    assert result.requests == (H + "/robots.txt", LISTING)
 
 
 # -- G7: two defensive branches ---------------------------------------------------------------------------------------------

@@ -1,0 +1,22 @@
+{
+  "description": "robots.txt disallows the listing path: blocked, and the listing is never requested.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    }
+  },
+  "expected": {
+    "status": "blocked",
+    "mode": "blocked",
+    "verdict": "blocked",
+    "block_reason": "robots_disallow",
+    "requests_exclude": [
+      "https://careers.example.test/jobs"
+    ]
+  }
+}

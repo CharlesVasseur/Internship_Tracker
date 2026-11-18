@@ -1,0 +1,22 @@
+{
+  "description": "A wildcard rule with an end anchor blocks the listing (the standard matcher, not a literal one).",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs/index.html"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    }
+  },
+  "expected": {
+    "status": "blocked",
+    "mode": "blocked",
+    "verdict": "blocked",
+    "block_reason": "robots_disallow",
+    "requests_exclude": [
+      "https://careers.example.test/jobs/index.html"
+    ]
+  }
+}

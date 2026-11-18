@@ -1,0 +1,31 @@
+{
+  "description": "The listing fails but the terms page is still read: failed/http_4xx and a flagged terms page.",
+  "firm": {
+    "name": "Example Firm",
+    "careers_url": "https://careers.example.test/careers",
+    "listing_url": "https://careers.example.test/jobs",
+    "terms_url": "https://careers.example.test/terms"
+  },
+  "responses": {
+    "https://careers.example.test/robots.txt": {
+      "file": "robots.txt"
+    },
+    "https://careers.example.test/jobs": {
+      "status": 404,
+      "body": "Not found"
+    },
+    "https://careers.example.test/terms": {
+      "file": "terms.html"
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "mode": "unknown",
+    "verdict": "unresolved",
+    "error_kind": "http_4xx",
+    "terms_status": "flagged",
+    "requests_include": [
+      "https://careers.example.test/terms"
+    ]
+  }
+}
