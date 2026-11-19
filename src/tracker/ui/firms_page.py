@@ -18,7 +18,12 @@ from tracker.queries import (
     list_opportunities,
     list_other_offices,
 )
-from tracker.service import add_application, add_note, save_application
+from tracker.service import (
+    add_application,
+    add_note,
+    save_application,
+    update_firm_link,
+)
 
 
 def render_firms_page() -> None:
@@ -159,6 +164,46 @@ def render_firms_page() -> None:
                 st.markdown(f"[Open saved link]({detail['careers_url']})")
             if detail["source_type"] == "search_link":
                 st.caption("This is a search link, not a careers page.")
+
+            with st.expander("Save a real careers link"):
+                current_url = (
+                    detail["careers_url"]
+                    if detail["source_type"] != "search_link"
+                    else ""
+                )
+                with st.form(
+                    key=f"link_{selected_firm['firm_id']}",
+                    clear_on_submit=False,
+                    border=True,
+                ):
+                    careers_url = st.text_input(
+                        "Careers page or posting URL",
+                        value=current_url or "",
+                    )
+                    link_type = st.selectbox(
+                        "Link type",
+                        ("careers_page", "direct_posting"),
+                    )
+                    apply_to_offices = st.checkbox(
+                        "Also apply to other offices of this employer "
+                        "that still have a search link",
+                        value=False,
+                    )
+                    link_submitted = st.form_submit_button("Save link")
+
+                if link_submitted:
+                    try:
+                        update_firm_link(
+                            connection,
+                            selected_firm["firm_id"],
+                            careers_url,
+                            link_type,
+                            apply_to_other_offices=apply_to_offices,
+                        )
+                    except (ValueError, LookupError, sqlite3.Error) as error:
+                        st.error(str(error))
+                    else:
+                        st.rerun()
 
             st.subheader("Other offices of this employer")
             other_offices = list_other_offices(

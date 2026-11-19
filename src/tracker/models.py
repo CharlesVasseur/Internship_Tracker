@@ -19,8 +19,14 @@ OPPORTUNITY_STATES = (
     "Needs review",
 )
 
+ACTIVITY_CREATED = "application_created"
+ACTIVITY_STAGE_CHANGE = "stage_change"
+ACTIVITY_NOTE = "note"
+
 ACTIVITY_TYPES = (
-    "application_created",
-    "stage_change",
-    "note",
+    ACTIVITY_CREATED,
+    ACTIVITY_STAGE_CHANGE,
+    ACTIVITY_NOTE,
 )
+
+LINK_TYPES = ("search_link", "direct_posting", "careers_page")
