@@ -7,7 +7,7 @@ name = "tracker"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "openpyxl",
+    "openpyxl>=3.1",
 ]
 
 [tool.setuptools.packages.find]

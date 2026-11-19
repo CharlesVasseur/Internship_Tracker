@@ -16,5 +16,8 @@ def connect(path: str | PathLike[str]) -> sqlite3.Connection:
 def init_db(path: str | PathLike[str]) -> None:
     """Create the tracker tables and indexes if they do not already exist."""
     schema = files("tracker").joinpath("schema.sql").read_text(encoding="utf-8")
-    with connect(path) as connection:
+    connection = connect(path)
+    try:
         connection.executescript(schema)
+    finally:
+        connection.close()

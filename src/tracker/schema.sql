@@ -1,12 +1,13 @@
 CREATE TABLE IF NOT EXISTS firms (
     id INTEGER PRIMARY KEY,
-    profile TEXT,
-    name TEXT,
+    profile TEXT NOT NULL,
+    name TEXT NOT NULL,
     employer_key TEXT,
-    country TEXT,
-    city TEXT,
+    country TEXT NOT NULL,
+    city TEXT NOT NULL DEFAULT '',
     category TEXT,
     actuarial_depth TEXT,
+    role_types TEXT,
     priority TEXT CHECK (priority IN ('P1', 'P2', 'P3', 'P4')),
     careers_url TEXT,
     source_type TEXT,
@@ -21,7 +22,8 @@ CREATE TABLE IF NOT EXISTS firms (
     notes TEXT,
     last_verified TEXT,
     last_successful_check TEXT,
-    last_check_status TEXT
+    last_check_status TEXT,
+    UNIQUE (profile, name, country, city)
 );
 
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS opportunities (
     first_seen TEXT,
     last_seen TEXT,
     missing_count INTEGER NOT NULL DEFAULT 0,
-    state TEXT CHECK (state IN ('Open', 'Upcoming', 'Closed', 'No match', 'Needs review')),
+    state TEXT NOT NULL DEFAULT 'Needs review'
+        CHECK (state IN ('Open', 'Upcoming', 'Closed', 'No match', 'Needs review')),
     is_internship INTEGER,
     role_family TEXT,
     season TEXT,
@@ -51,7 +54,7 @@ CREATE TABLE IF NOT EXISTS applications (
     id INTEGER PRIMARY KEY,
     firm_id INTEGER NOT NULL,
     opportunity_id INTEGER,
-    stage TEXT CHECK (stage IN (
+    stage TEXT NOT NULL DEFAULT 'To research' CHECK (stage IN (
         'To research',
         'Contacted',
         'Applied',
@@ -86,7 +89,7 @@ CREATE TABLE IF NOT EXISTS checks (
     firm_id INTEGER NOT NULL,
     started_at TEXT,
     finished_at TEXT,
-    result TEXT CHECK (result IN ('ok', 'empty', 'failed', 'blocked')),
+    result TEXT NOT NULL CHECK (result IN ('ok', 'empty', 'failed', 'blocked')),
     http_status INTEGER,
     n_results INTEGER,
     error TEXT,
@@ -96,11 +99,11 @@ CREATE TABLE IF NOT EXISTS checks (
 
 CREATE TABLE IF NOT EXISTS point_events (
     id INTEGER PRIMARY KEY,
-    event_type TEXT,
+    event_type TEXT NOT NULL,
     application_id INTEGER,
     firm_id INTEGER,
     idempotency_key TEXT NOT NULL UNIQUE,
-    points INTEGER,
+    points INTEGER NOT NULL,
     created_at TEXT,
     FOREIGN KEY (application_id) REFERENCES applications(id),
     FOREIGN KEY (firm_id) REFERENCES firms(id)
