@@ -18,3 +18,9 @@ OPPORTUNITY_STATES = (
     "No match",
     "Needs review",
 )
+
+ACTIVITY_TYPES = (
+    "application_created",
+    "stage_change",
+    "note",
+)

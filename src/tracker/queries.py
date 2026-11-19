@@ -63,7 +63,12 @@ def list_firms(
         parameters.extend(priorities)
     if stages:
         placeholders = ", ".join("?" for _ in stages)
-        sql += f" AND latest.stage IN ({placeholders})"
+        sql += (
+            f" AND EXISTS ("
+            f"SELECT 1 FROM applications AS stage_app "
+            f"WHERE stage_app.firm_id = f.id "
+            f"AND stage_app.stage IN ({placeholders}))"
+        )
         parameters.extend(stages)
     if search:
         sql += (
@@ -185,5 +190,22 @@ def list_other_offices(
         ORDER BY country, city
         """,
         (firm["profile"], firm["employer_key"], firm_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_activities(
+    conn: sqlite3.Connection,
+    application_id: int,
+) -> list[dict]:
+    """Return activities for an application, newest first."""
+    rows = conn.execute(
+        """
+        SELECT id, type, date, notes, outcome
+        FROM activities
+        WHERE application_id = ?
+        ORDER BY date DESC, id DESC
+        """,
+        (application_id,),
     ).fetchall()
     return [dict(row) for row in rows]

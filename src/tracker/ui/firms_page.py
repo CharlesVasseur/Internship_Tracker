@@ -1,20 +1,24 @@
 """Read-only Firms page."""
 
 from pathlib import Path
+from datetime import date
 import sqlite3
 
 import streamlit as st
 
 from tracker.db import connect
+from tracker.models import APPLICATION_STAGES
 from tracker.queries import (
     get_db_path,
     get_firm,
     get_filter_options,
+    list_activities,
     list_applications,
     list_firms,
     list_opportunities,
     list_other_offices,
 )
+from tracker.service import add_application, add_note, save_application
 
 
 def render_firms_page() -> None:
@@ -175,30 +179,128 @@ def render_firms_page() -> None:
                 connection,
                 selected_firm["firm_id"],
             )
-            if applications:
-                application_rows = [
-                    {
-                        "Stage": application["stage"],
-                        "Next action": application["next_action"],
-                        "Next action date": application["next_action_date"],
-                        "Submitted": application["submitted_date"],
-                        "Notes": application["notes"],
-                    }
-                    for application in applications
-                ]
-                st.dataframe(
-                    application_rows,
-                    hide_index=True,
-                    column_order=[
-                        "Stage",
-                        "Next action",
-                        "Next action date",
-                        "Submitted",
-                        "Notes",
-                    ],
-                )
-            else:
+            if not applications:
                 st.info("No application yet.")
+
+            for application in applications:
+                application_id = application["id"]
+                with st.container(border=True):
+                    st.markdown(
+                        f"**Application #{application_id} - "
+                        f"{application['stage']}**"
+                    )
+                    with st.form(
+                        key=f"save_app_{application_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        stage_index = APPLICATION_STAGES.index(application["stage"])
+                        new_stage = st.selectbox(
+                            "Stage",
+                            APPLICATION_STAGES,
+                            index=stage_index,
+                        )
+                        change_date = st.date_input(
+                            "Date of the change",
+                            value=date.today(),
+                            format="YYYY-MM-DD",
+                        )
+                        next_action = st.text_input(
+                            "Next action",
+                            value=application["next_action"] or "",
+                        )
+                        next_action_date = st.text_input(
+                            "Next action date (YYYY-MM-DD)",
+                            value=application["next_action_date"] or "",
+                        )
+                        notes = st.text_area(
+                            "Notes",
+                            value=application["notes"] or "",
+                        )
+                        save_submitted = st.form_submit_button("Save")
+
+                    if save_submitted:
+                        try:
+                            save_application(
+                                connection,
+                                application_id,
+                                stage=new_stage,
+                                on_date=change_date,
+                                next_action=next_action,
+                                next_action_date=next_action_date,
+                                notes=notes,
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+
+                    activities = list_activities(
+                        connection,
+                        application_id,
+                    )
+                    if activities:
+                        activity_rows = [
+                            {
+                                "Date": activity["date"],
+                                "Type": activity["type"],
+                                "Notes": activity["notes"],
+                            }
+                            for activity in activities
+                        ]
+                        st.dataframe(
+                            activity_rows,
+                            hide_index=True,
+                            column_order=["Date", "Type", "Notes"],
+                        )
+                    else:
+                        st.caption("No activity yet.")
+
+                    with st.form(
+                        key=f"note_{application_id}",
+                        clear_on_submit=True,
+                        border=True,
+                    ):
+                        note_text = st.text_input("Add a note to the log")
+                        note_submitted = st.form_submit_button("Add note")
+
+                    if note_submitted:
+                        try:
+                            add_note(
+                                connection,
+                                application_id,
+                                note_text,
+                                on_date=date.today(),
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+
+            with st.form(
+                key=f"add_app_{selected_firm['firm_id']}",
+                clear_on_submit=False,
+                border=True,
+            ):
+                new_application_stage = st.selectbox(
+                    "Stage",
+                    APPLICATION_STAGES,
+                    index=0,
+                )
+                add_submitted = st.form_submit_button("Add application")
+
+            if add_submitted:
+                try:
+                    add_application(
+                        connection,
+                        selected_firm["firm_id"],
+                        stage=new_application_stage,
+                        on_date=date.today(),
+                    )
+                except (ValueError, LookupError, sqlite3.Error) as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
 
             st.subheader("Opportunities")
             opportunities = list_opportunities(

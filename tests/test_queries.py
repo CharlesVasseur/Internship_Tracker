@@ -6,6 +6,7 @@ from tracker.queries import (
     get_firm,
     get_filter_options,
     list_applications,
+    list_activities,
     list_firms,
     list_opportunities,
     list_other_offices,
@@ -313,5 +314,62 @@ def test_list_other_offices_matches_profile_and_employer(tmp_path):
         assert offices[0]["country"] == "Spain"
         assert list_other_offices(connection, pension_id) == []
         assert list_other_offices(connection, null_key_id) == []
+    finally:
+        connection.close()
+
+
+def test_list_activities_newest_first(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        application_id = connection.execute(
+            "SELECT id FROM applications WHERE firm_id = ?",
+            (example_id,),
+        ).fetchone()["id"]
+        connection.execute(
+            "INSERT INTO activities (application_id, type, date, notes) "
+            "VALUES (?, 'note', '2026-11-19', 'Older')",
+            (application_id,),
+        )
+        connection.execute(
+            "INSERT INTO activities (application_id, type, date, notes) "
+            "VALUES (?, 'note', '2026-11-20', 'Newest')",
+            (application_id,),
+        )
+        connection.execute(
+            "INSERT INTO activities (application_id, type, date, notes) "
+            "VALUES (?, 'note', '2026-11-20', 'Same date newest id')",
+            (application_id,),
+        )
+        connection.commit()
+        activities = list_activities(connection, application_id)
+        assert [activity["notes"] for activity in activities[:2]] == [
+            "Same date newest id",
+            "Newest",
+        ]
+    finally:
+        connection.close()
+
+
+def test_stage_filter_finds_older_application(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        applications = connection.execute(
+            "SELECT id FROM applications WHERE firm_id = ? ORDER BY id",
+            (example_id,),
+        ).fetchall()
+        older_id = applications[0]["id"]
+        newer_id = applications[1]["id"]
+        connection.execute(
+            "UPDATE applications SET stage = 'Contacted' WHERE id = ?",
+            (older_id,),
+        )
+        connection.execute(
+            "UPDATE applications SET stage = 'Applied' WHERE id = ?",
+            (newer_id,),
+        )
+        connection.commit()
+        rows = list_firms(connection, stages=["Contacted"])
+        names = [row["name"] for row in rows]
+        assert "Example Firm" in names
     finally:
         connection.close()
