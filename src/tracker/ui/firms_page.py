@@ -6,7 +6,15 @@ import sqlite3
 import streamlit as st
 
 from tracker.db import connect
-from tracker.queries import get_db_path, get_filter_options, list_firms
+from tracker.queries import (
+    get_db_path,
+    get_firm,
+    get_filter_options,
+    list_applications,
+    list_firms,
+    list_opportunities,
+    list_other_offices,
+)
 
 
 def render_firms_page() -> None:
@@ -69,7 +77,8 @@ def render_firms_page() -> None:
                 "Country": firm["country"],
                 "City": firm["city"],
                 "Priority": firm["priority"],
-                "Stage": firm["stage"],
+                "Latest stage": firm["stage"],
+                "Applications": firm["n_applications"],
                 "Next action": firm["next_action_date"],
                 "Category": firm["category"],
                 "Actuarial depth": firm["actuarial_depth"],
@@ -79,7 +88,7 @@ def render_firms_page() -> None:
             }
             for firm in shown_firms
         ]
-        st.dataframe(
+        table_event = st.dataframe(
             rows,
             hide_index=True,
             column_order=[
@@ -87,7 +96,8 @@ def render_firms_page() -> None:
                 "Country",
                 "City",
                 "Priority",
-                "Stage",
+                "Latest stage",
+                "Applications",
                 "Next action",
                 "Category",
                 "Actuarial depth",
@@ -101,7 +111,119 @@ def render_firms_page() -> None:
                     display_text="Open",
                 ),
             },
+            on_select="rerun",
+            selection_mode="single-row",
+            key="firms_table",
         )
+
+        selected_rows = table_event.selection.rows
+        if selected_rows:
+            position = selected_rows[0]
+            if position < 0 or position >= len(shown_firms):
+                return
+
+            selected_firm = shown_firms[position]
+            detail = get_firm(connection, selected_firm["firm_id"])
+            if detail is None:
+                return
+
+            st.divider()
+            st.header(
+                f"{detail['name']} - {detail['city'] or '-'}, {detail['country']}"
+            )
+
+            facts = [
+                ("Priority", detail["priority"]),
+                ("Category", detail["category"]),
+                ("Actuarial depth", detail["actuarial_depth"]),
+                ("Role types", detail["role_types"]),
+                ("Eligibility", detail["eligibility"]),
+                ("Internship type", detail["internship_type"]),
+                ("Language fit", detail["language_fit"]),
+                ("Work authorisation", detail["work_authorisation"]),
+                ("Opening window", detail["opening_window"]),
+                ("Last verified", detail["last_verified"]),
+                ("Notes", detail["notes"]),
+            ]
+            fact_columns = st.columns(3)
+            for index, (label, value) in enumerate(facts):
+                fact_columns[index % 3].markdown(
+                    f"**{label}:** {value if value not in (None, '') else '-'}"
+                )
+
+            if detail["careers_url"]:
+                st.markdown(f"[Open saved link]({detail['careers_url']})")
+            if detail["source_type"] == "search_link":
+                st.caption("This is a search link, not a careers page.")
+
+            st.subheader("Other offices of this employer")
+            other_offices = list_other_offices(
+                connection,
+                selected_firm["firm_id"],
+            )
+            if other_offices:
+                for office in other_offices:
+                    st.write(
+                        f"{office['country'] or '-'} - "
+                        f"{office['city'] or '-'}"
+                    )
+            else:
+                st.caption("No other office.")
+
+            st.subheader("Applications")
+            applications = list_applications(
+                connection,
+                selected_firm["firm_id"],
+            )
+            if applications:
+                application_rows = [
+                    {
+                        "Stage": application["stage"],
+                        "Next action": application["next_action"],
+                        "Next action date": application["next_action_date"],
+                        "Submitted": application["submitted_date"],
+                        "Notes": application["notes"],
+                    }
+                    for application in applications
+                ]
+                st.dataframe(
+                    application_rows,
+                    hide_index=True,
+                    column_order=[
+                        "Stage",
+                        "Next action",
+                        "Next action date",
+                        "Submitted",
+                        "Notes",
+                    ],
+                )
+            else:
+                st.info("No application yet.")
+
+            st.subheader("Opportunities")
+            opportunities = list_opportunities(
+                connection,
+                selected_firm["firm_id"],
+            )
+            if opportunities:
+                opportunity_rows = [
+                    {
+                        "Title": opportunity["title"],
+                        "Location": opportunity["location"],
+                        "URL": opportunity["url"],
+                        "State": opportunity["state"],
+                        "First seen": opportunity["first_seen"],
+                        "Last seen": opportunity["last_seen"],
+                        "Internship": opportunity["is_internship"],
+                    }
+                    for opportunity in opportunities
+                ]
+                st.dataframe(opportunity_rows, hide_index=True)
+            else:
+                st.info(
+                    "No opportunities tracked yet. "
+                    "Monitoring is manual for now: use the saved link."
+                )
     except sqlite3.Error as error:
         st.error(f"Database error: {error}")
     finally:

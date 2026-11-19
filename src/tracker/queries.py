@@ -36,7 +36,12 @@ def list_firms(
             f.opening_window,
             f.last_verified,
             f.careers_url,
-            f.source_type
+            f.source_type,
+            (
+                SELECT COUNT(*)
+                FROM applications AS app
+                WHERE app.firm_id = f.id
+            ) AS n_applications
         FROM firms AS f
         LEFT JOIN applications AS latest
             ON latest.id = (
@@ -102,13 +107,6 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     }
     priorities = [priority for priority in ("P1", "P2", "P3", "P4") if priority in existing_priorities]
 
-    existing_stages = {
-        row["stage"]
-        for row in conn.execute(
-            "SELECT DISTINCT stage FROM applications "
-            "WHERE stage IS NOT NULL"
-        )
-    }
     stages = list(APPLICATION_STAGES)
 
     return {
@@ -116,3 +114,76 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         "priorities": priorities,
         "stages": stages,
     }
+
+
+def get_firm(conn: sqlite3.Connection, firm_id: int) -> dict | None:
+    """Return every column of one firm, or None when it does not exist."""
+    row = conn.execute(
+        "SELECT * FROM firms WHERE id = ?",
+        (firm_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def list_applications(
+    conn: sqlite3.Connection,
+    firm_id: int,
+) -> list[dict]:
+    """Return every application for a firm, newest application first."""
+    rows = conn.execute(
+        """
+        SELECT id, stage, submitted_date, next_action, next_action_date,
+               priority_override, links, notes, opportunity_id
+        FROM applications
+        WHERE firm_id = ?
+        ORDER BY id DESC
+        """,
+        (firm_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_opportunities(
+    conn: sqlite3.Connection,
+    firm_id: int,
+) -> list[dict]:
+    """Return opportunities for a firm with recent observations first."""
+    rows = conn.execute(
+        """
+        SELECT id, title, location, url, state, first_seen, last_seen,
+               is_internship
+        FROM opportunities
+        WHERE firm_id = ?
+        ORDER BY
+            CASE WHEN last_seen IS NULL THEN 1 ELSE 0 END,
+            last_seen DESC
+        """,
+        (firm_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_other_offices(
+    conn: sqlite3.Connection,
+    firm_id: int,
+) -> list[dict]:
+    """Return other office rows for the same profile and employer."""
+    firm = conn.execute(
+        "SELECT profile, employer_key FROM firms WHERE id = ?",
+        (firm_id,),
+    ).fetchone()
+    if firm is None or firm["employer_key"] is None:
+        return []
+
+    rows = conn.execute(
+        """
+        SELECT id AS firm_id, name, country, city
+        FROM firms
+        WHERE profile = ?
+          AND employer_key = ?
+          AND id != ?
+        ORDER BY country, city
+        """,
+        (firm["profile"], firm["employer_key"], firm_id),
+    ).fetchall()
+    return [dict(row) for row in rows]

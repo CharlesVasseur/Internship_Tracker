@@ -2,7 +2,14 @@
 
 from tracker.db import connect, init_db
 from tracker.models import APPLICATION_STAGES
-from tracker.queries import get_filter_options, list_firms
+from tracker.queries import (
+    get_firm,
+    get_filter_options,
+    list_applications,
+    list_firms,
+    list_opportunities,
+    list_other_offices,
+)
 
 
 def seed_database(database_path):
@@ -164,5 +171,147 @@ def test_filter_options_include_all_stages(tmp_path):
     try:
         options = get_filter_options(connection)
         assert options["stages"] == list(APPLICATION_STAGES)
+    finally:
+        connection.close()
+
+
+def test_application_counts_are_zero_one_and_two(tmp_path):
+    connection, _, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        rows = list_firms(connection)
+        counts = {row["name"]: row["n_applications"] for row in rows}
+        assert counts == {
+            "Example Firm": 2,
+            "Sample Re": 1,
+            "Test Pension": 0,
+        }
+    finally:
+        connection.close()
+
+
+def test_get_firm_returns_row_or_none(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        firm = get_firm(connection, example_id)
+        assert firm is not None
+        assert firm["name"] == "Example Firm"
+        assert firm["country"] == "France"
+        assert get_firm(connection, -1) is None
+    finally:
+        connection.close()
+
+
+def test_list_applications_returns_only_firm_newest_first(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        applications = list_applications(connection, example_id)
+        assert [application["stage"] for application in applications] == [
+            "Contacted",
+            "To research",
+        ]
+        assert list_applications(connection, pension_id) == []
+    finally:
+        connection.close()
+
+
+def test_list_opportunities_returns_none_then_orders_last_seen(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        assert list_opportunities(connection, pension_id) == []
+        connection.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, title, location, url, state, first_seen, last_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                example_id,
+                "Recent role",
+                "Paris",
+                "https://example.test/recent",
+                "Open",
+                "2026-01-01",
+                "2026-11-18",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, title, location, url, state, first_seen, last_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                example_id,
+                "Older role",
+                "Paris",
+                "https://example.test/older",
+                "Closed",
+                "2025-01-01",
+                "2025-11-18",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, title, location, url, state, first_seen, last_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                example_id,
+                "Unknown date role",
+                "Paris",
+                "https://example.test/unknown",
+                "Needs review",
+                "2026-01-01",
+                None,
+            ),
+        )
+        connection.commit()
+        opportunities = list_opportunities(connection, example_id)
+        assert [opportunity["title"] for opportunity in opportunities] == [
+            "Recent role",
+            "Older role",
+            "Unknown date role",
+        ]
+    finally:
+        connection.close()
+
+
+def test_list_other_offices_matches_profile_and_employer(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        connection.execute(
+            """
+            INSERT INTO firms (
+                profile, name, employer_key, country, city
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            ("profile", "Example Firm", "example firm", "Spain", "Madrid"),
+        )
+        same_office_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO firms (
+                profile, name, employer_key, country, city
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            ("other-profile", "Example Firm", "example firm", "Portugal", "Lisbon"),
+        )
+        connection.execute(
+            """
+            INSERT INTO firms (
+                profile, name, employer_key, country, city
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            ("profile", "Test Pension", None, "France", "Paris"),
+        )
+        null_key_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.commit()
+
+        offices = list_other_offices(connection, example_id)
+        assert [office["firm_id"] for office in offices] == [same_office_id]
+        assert offices[0]["country"] == "Spain"
+        assert list_other_offices(connection, pension_id) == []
+        assert list_other_offices(connection, null_key_id) == []
     finally:
         connection.close()
