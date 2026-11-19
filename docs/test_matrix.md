@@ -85,6 +85,19 @@ Result: 30 rows Covered, 1 Partly (row 10, waiting for a real challenge-page cap
 | G14 | `urllib_transport` and its redirect handler never run | open: T6 (needs the real network) |
 | G15 | small defensive lines in cache, decode, fetcher, html_scan, listing, vendors, structured, csv, runner | open, left on purpose; `__main__.py` runs only inside a subprocess test, so coverage cannot see it |
 
+### Added in T6.5 (`tests/test_triage_fetcher_host_rules.py`)
+
+| Rule | Test |
+|---|---|
+| https default port 443 is the same origin | `test_https_default_port_is_the_same_origin` |
+| http default port 80 is the same origin | `test_http_default_port_is_the_same_origin` |
+| A redirect to the explicit default port does not refetch robots.txt | `test_a_redirect_to_the_explicit_default_port_does_not_refetch_robots` |
+| A non-default port is another origin | `test_a_port_that_is_not_the_default_is_still_another_origin` |
+| http and https stay different origins | `test_http_and_https_stay_different_origins` |
+| Crawl-delay applies to robots.txt of another origin of the host | `test_crawl_delay_also_applies_to_robots_txt_of_another_origin_of_the_host` |
+| The delay holds on an http sitemap that redirects to https | `test_the_delay_learned_on_one_origin_holds_for_a_redirect_to_the_other_origin` |
+| One host's delay does not slow another host | `test_the_delay_of_one_host_does_not_slow_down_another_host` |
+
 ## Notes
 
 - Firm names were once present in the repository (tests, docstrings, three real robots.txt files). They were

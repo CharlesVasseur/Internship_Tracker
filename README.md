@@ -4,7 +4,7 @@
 
 A local Python dashboard that helps follow internship opportunities at selected firms: it tracks firms and applications, checks careers sources for matching openings, and reminds you of next actions.
 
-**Status:** building the *triage* module, which decides, for each firm, how its careers page can be monitored (feed, structured data, recruiting system, plain HTML, JavaScript-only, or manual). The fetching layer, the analyzers, the orchestrator, the runner and the command-line tool are done, and the whole module is tested offline (synthetic scenarios, gap tests, random-input tests) on Windows, macOS and Linux through continuous integration. The tool has never contacted a real website: the first live run is step T6. There is no dashboard yet.
+**Status:** the *triage* module is complete and has run live. It decides, for each firm, how its careers page can be monitored (feed, structured data, recruiting system, plain HTML, JavaScript-only, or manual). The first live run (T6) on the 19 surveyed firms gave 1 automatic, 11 probable, 1 manual, 2 blocked and 4 unresolved, so the gate is UNDECIDED under the contract (see `docs/t6_handoff.md`). The module is also tested offline (synthetic scenarios, gap tests, random-input tests) on Windows, macOS and Linux through continuous integration. There is no dashboard yet.
 
 | Step | Work | State |
 |---|---|---|
@@ -14,7 +14,7 @@ A local Python dashboard that helps follow internship opportunities at selected 
 | T3 | Analyzers: job links, structured data, feeds, recruiting systems, sitemaps, terms-of-use flag | done |
 | T4 | Orchestration and command-line tool: firm-list reader, `triage_firm`, runner with resume, `python -m tracker.triage` | done |
 | T5 | Fixtures and tests: 35 synthetic scenarios run end to end, gap and random-input tests, repository hygiene tests, CI on Windows, macOS and Linux | done |
-| T6 | First live run on the 19 firms, gate decision | planned |
+| T6 | First live run on the 19 firms, comparison with the old survey, gate decision, two fetcher fixes found live | done (gate UNDECIDED) |
 
 ## Project layout
 
@@ -50,6 +50,7 @@ docs/
   t3_handoff.md        what T3 delivers and what is still open
   t4_handoff.md        what T4 delivers and what is still open
   t5_handoff.md        what T5 delivers and what is still open
+  t6_handoff.md        what T6 delivers and what is still open
   test_matrix.md       which test checks which rule of the spec, and what is still unchecked
 scripts/source_survey.py   the first survey script, kept unchanged for comparison
 ```
@@ -85,7 +86,7 @@ From the project root, with the virtual environment active (PowerShell):
 $env:PYTHONPATH = "src"
 python -m tracker.triage --input survey_input.csv --replay          # offline: answers only from the cache folder
 python -m tracker.triage --input survey_input.csv --resume          # continue an interrupted run
-python -m tracker.triage --input survey_input.csv --contact you@example.com   # LIVE run: contacts websites (T6)
+python -m tracker.triage --input survey_input.csv --contact you@example.com   # LIVE run: contacts websites
 ```
 
 Options: `--output` (default `triage_output.jsonl`, never overwritten), `--cache-dir` (default `triage_cache`), `--threshold` (default 8), `--contact` or the `SURVEY_CONTACT` variable (live runs only). Exit code 0 means the run finished (the gate result is printed, not an error), 2 means it could not start or write, 130 means Ctrl+C.
@@ -94,6 +95,7 @@ Options: `--output` (default `triage_output.jsonl`, never overwritten), `--cache
 
 - `robots.txt` is read first, including `Crawl-delay`, and obeyed.
 - At most 1 request per second per host; 15 s timeout; retries only for timeouts, connection errors and server errors.
+- A `Crawl-delay` holds for the whole host (its `http` and `https` origins alike), and the default port (443, 80) is not part of the origin.
 - A request that is refused (401, 403, 429) is never retried and the host is left alone.
 - The User-Agent names the project and carries a contact address given at run time (never stored in the code).
 - No logins, no CAPTCHAs, no LinkedIn or Indeed, and TLS certificate checking is never turned off.
@@ -104,8 +106,10 @@ Options: `--output` (default `triage_output.jsonl`, never overwritten), `--cache
 
 ## Known limits
 
-- The live network function has not yet been run against a real site; that happens in T6.
+- The network function ran live in T6 (19 firms, 83 requests). Pacing is checked offline with a fake clock; live, only response times were recorded, so spacing is consistent with the rules but not measured.
 - Continuous integration does not run the real-capture tests or the firm-name check (their files are not in the repository).
-- Challenge-page (CAPTCHA) detection is not implemented until a real captured page is available.
-- Feed reading and JSON-LD detection are built from the standards and tested on synthetic data; no real feed or job page has been captured yet.
-- The terms-of-use patterns cover seven languages but have been checked on real pages in French and English only.
+- Challenge-page (CAPTCHA) detection is not implemented: no real challenge page has been captured (the refusals seen were a plain 403 and a 429 from a CDN, both handled by status).
+- JSON-LD was found on real job pages in the live run, and a real blog feed was parsed and rejected. No real job feed has been fetched (the one found is disallowed by its site's `robots.txt`).
+- The terms-of-use patterns cover seven languages but real pages were read in English and French only; a PDF terms page is `not_assessed`.
+- TLS failed on 5 hosts in the live run and the cause is not known. Certificate verification is never switched off.
+- Only the first `Sitemap:` line is read and a job-link threshold of 5 is used; both can leave a firm `probable` or `manual`.
