@@ -66,7 +66,6 @@ reach a PASS.
 | Idea, needs a SPEC CHANGE first: a lower job-link threshold for very small careers pages | later |
 | Real captures to export from the cache into `tests/local_fixtures/` (git-ignored; strip `set-cookie` headers first): a job page with JSON-LD (two firms), the blog feed, the empty sitemap, the http-to-https 301 pair, the two refusal pages | when exported |
 | Still missing as real captures: a job feed, a sitemap index, a challenge page (CAPTCHA), a terms page in Spanish, German, Dutch, Portuguese or Italian | when available |
-| Replay the real cache offline after the T6.5 fix and compare with the live results (one firm should need one request fewer) | next offline check |
 | Request start times are not logged (the cache keeps the response time), so live pacing is only consistent with the rules, not measured | optional, small change |
 
 ## What is verified, and what is not
@@ -74,8 +73,8 @@ reach a PASS.
 - Verified on the real network: everything in "What the live run taught us", on 19 firms and 35 hosts.
 - Verified offline: the two T6.5 fixes (8 tests, red before the fix, green after), and the whole suite
   (1379 tests on the author's machine).
-- NOT verified: the cause of any TLS failure or refusal; pacing measured at request start; replay of the real
-  cache after T6.5; anything on a real challenge page, feed of jobs, sitemap index or terms page in five languages.
+- Verified offline on the real cache: --replay of the 19-firm cache reproduced the live verdicts and counts exactly, with one request fewer for one firm after the T6.5 fix (9 to 8).
+- NOT verified: the cause of any TLS failure or refusal; pacing measured at request start; anything on a real challenge page, feed of jobs, sitemap index or terms page in five languages.
 
 ## Known limits
 
