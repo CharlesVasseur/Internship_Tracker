@@ -55,9 +55,23 @@ docs/
 scripts/source_survey.py   the first survey script, kept unchanged for comparison
 ```
 
+## Import your own Excel
+
+Keep the workbook and SQLite database inside `data/`; both `*.xlsx` and `data/` are git-ignored.
+
+```powershell
+python scripts/import_excel.py --xlsx data/Actuarial_Internship_Tracker.xlsx --db data/charles.db --profile charles
+```
+
+The workbook must contain a sheet named `Tracker`. The header row must include `Company`, `Country`, `City`, `Category`, `Actuarial depth`, `Role types`, `Internship type`, `Eligibility`, `Priority`, `Language fit`, `Opening window`, `Application link / contact`, `Work authorisation (CH only)`, `Notes`, `Last verified`, `Status`, and `Next action date`.
+
+The summary reports rows read, firms inserted, firms skipped as already present, applications created, distinct employer keys, and firm counts per country. The import is safe to run twice: existing firms are skipped and applications are only created for newly inserted firms.
+
+The careers link is read from the `Application link / contact` cell hyperlink target, not from the cell text. Synthetic examples can use names such as `Example Firm` and hosts such as `example.test`.
+
 ## Running the tests
 
-With the virtual environment active, from the project root (Python 3.12, standard library plus pytest only):
+With the virtual environment active, from the project root (Python 3.12):
 
 ```powershell
 python -m pytest -q
