@@ -471,6 +471,7 @@ def test_valid_firm_link_updates_url_and_type(tmp_path):
         ("javascript:alert(1)", "careers_page"),
         ("example.test/jobs", "careers_page"),
         ("https://", "careers_page"),
+        ("https:///x", "careers_page"),
         ("https://example.test/a b", "careers_page"),
         ("", "careers_page"),
         ("https://example.test/" + "x" * 2001, "careers_page"),

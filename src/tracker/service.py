@@ -2,6 +2,7 @@
 
 from datetime import date
 import sqlite3
+from urllib.parse import urlsplit
 
 from tracker.models import (
     ACTIVITY_CREATED,
@@ -82,7 +83,7 @@ def save_application(
     stage: str,
     on_date: str | date,
     next_action: str | None,
-    next_action_date: str | None,
+    next_action_date: str | date | None,
     notes: str | None,
 ) -> dict:
     """Save application fields and log a stage change when it occurs."""
@@ -226,6 +227,8 @@ def update_firm_link(
     scheme_end = clean_url.find("://") + 3
     if not clean_url[scheme_end:].strip():
         raise ValueError("URL must contain something after the scheme")
+    if not urlsplit(clean_url).netloc:
+        raise ValueError("URL must contain a host")
     if link_type not in ("direct_posting", "careers_page"):
         raise ValueError(
             "link_type must be direct_posting or careers_page"

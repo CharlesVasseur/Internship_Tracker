@@ -1,5 +1,7 @@
 """Offline tests for the read-only firm queries."""
 
+import pytest
+
 from tracker.db import connect, init_db
 from tracker.models import APPLICATION_STAGES
 from tracker.queries import (
@@ -8,6 +10,7 @@ from tracker.queries import (
     list_applications,
     list_activities,
     list_firms,
+    list_next_actions,
     list_opportunities,
     list_other_offices,
 )
@@ -371,5 +374,160 @@ def test_stage_filter_finds_older_application(tmp_path):
         rows = list_firms(connection, stages=["Contacted"])
         names = [row["name"] for row in rows]
         assert "Example Firm" in names
+    finally:
+        connection.close()
+
+
+def test_list_next_actions_groups_dates_exclusions_and_sorting(tmp_path):
+    init_db(tmp_path / "tracker.db")
+    connection = connect(tmp_path / "tracker.db")
+    try:
+        firms = [
+            ("Example Firm", "France", "Paris"),
+            ("Sample Re", "Switzerland", "Zurich"),
+            ("Test Pension", "Spain", "Madrid"),
+        ]
+        firm_ids = {}
+        for name, country, city in firms:
+            connection.execute(
+                """
+                INSERT INTO firms (
+                    profile, name, employer_key, country, city
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                ("profile", name, name.lower(), country, city),
+            )
+            firm_ids[name] = connection.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
+
+        applications = [
+            ("Example Firm", "Overdue old", "2026-11-29", "Applied"),
+            ("Sample Re", "Overdue newer", "2026-11-30", "Contacted"),
+            ("Test Pension", "Due today", "2026-12-01", "Offer"),
+            ("Example Firm", "Due tomorrow", "2026-12-02", "Applied"),
+            ("Sample Re", "Due horizon", "2026-12-08", "Online interview"),
+            ("Test Pension", "Beyond horizon", "2026-12-09", "Applied"),
+            ("Example Firm", "Rejected action", "2026-12-01", "Rejected"),
+            ("Sample Re", "No date action", None, "Applied"),
+            ("Test Pension", "Unreadable slash", "01/12/2026", "Applied"),
+            ("Example Firm", "Unreadable text", "tomorrow", "Contacted"),
+            ("Test Pension", None, None, "Applied"),
+        ]
+        for name, next_action, next_action_date, stage in applications:
+            connection.execute(
+                """
+                INSERT INTO applications (
+                    firm_id, stage, next_action, next_action_date
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (firm_ids[name], stage, next_action, next_action_date),
+            )
+        connection.commit()
+
+        result = list_next_actions(connection, "2026-12-01")
+
+        assert [item["next_action"] for item in result["overdue"]] == [
+            "Overdue old",
+            "Overdue newer",
+        ]
+        assert [item["next_action"] for item in result["today"]] == [
+            "Due today",
+        ]
+        assert [item["next_action"] for item in result["upcoming"]] == [
+            "Due tomorrow",
+            "Due horizon",
+        ]
+        assert all(
+            item["next_action"] != "Beyond horizon"
+            for items in result.values()
+            for item in items
+        )
+        assert all(
+            item["next_action"] != "Rejected action"
+            for items in result.values()
+            for item in items
+        )
+        assert [item["next_action"] for item in result["no_date"]] == [
+            "No date action",
+        ]
+        assert [item["next_action"] for item in result["unreadable"]] == [
+            "Unreadable text",
+            "Unreadable slash",
+        ]
+        assert [item["firm_name"] for item in result["unreadable"]] == [
+            "Example Firm",
+            "Test Pension",
+        ]
+        assert all(
+            item["next_action"] != "None"
+            for items in result.values()
+            for item in items
+        )
+        assert all(
+            item["next_action"] != None
+            for item in result["no_date"]
+        )
+        assert result["today"][0]["stage"] == "Offer"
+        assert all(
+            item["next_action"] != "None"
+            for items in result.values()
+            for item in items
+        )
+    finally:
+        connection.close()
+
+
+def test_list_next_actions_sorting_by_date_then_firm_name(tmp_path):
+    init_db(tmp_path / "tracker.db")
+    connection = connect(tmp_path / "tracker.db")
+    try:
+        for name, city in (
+            ("Test Pension", "Madrid"),
+            ("Example Firm", "Paris"),
+            ("Sample Re", "Zurich"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO firms (
+                    profile, name, employer_key, country, city
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                ("profile", name, name.lower(), "France", city),
+            )
+            firm_id = connection.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
+            date_value = {
+                "Test Pension": "2026-11-30",
+                "Example Firm": "2026-11-29",
+                "Sample Re": "2026-11-30",
+            }[name]
+            connection.execute(
+                """
+                INSERT INTO applications (
+                    firm_id, stage, next_action, next_action_date
+                ) VALUES (?, 'Applied', 'Act', ?)
+                """,
+                (firm_id, date_value),
+            )
+        connection.commit()
+
+        result = list_next_actions(connection, "2026-12-01")
+        assert [item["firm_name"] for item in result["overdue"]] == [
+            "Example Firm",
+            "Sample Re",
+            "Test Pension",
+        ]
+    finally:
+        connection.close()
+
+
+def test_list_next_actions_rejects_invalid_today(tmp_path):
+    init_db(tmp_path / "tracker.db")
+    connection = connect(tmp_path / "tracker.db")
+    try:
+        with pytest.raises(ValueError):
+            list_next_actions(connection, "01/12/2026")
     finally:
         connection.close()

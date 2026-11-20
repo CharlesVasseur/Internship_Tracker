@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 import os
 import sqlite3
 
@@ -146,6 +147,79 @@ def list_applications(
         (firm_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_next_actions(
+    conn: sqlite3.Connection,
+    today: str,
+    horizon_days: int = 7,
+) -> dict:
+    """Return applications with overdue, due, unscheduled or unreadable next actions."""
+    today_date = date.fromisoformat(today)
+    horizon_date = today_date + timedelta(days=horizon_days)
+
+    rows = conn.execute(
+        """
+        SELECT
+            app.id AS application_id,
+            f.id AS firm_id,
+            f.name AS firm_name,
+            f.country,
+            f.city,
+            app.stage,
+            app.next_action,
+            app.next_action_date
+        FROM applications AS app
+        JOIN firms AS f ON f.id = app.firm_id
+        WHERE app.stage != 'Rejected'
+        """
+    ).fetchall()
+
+    overdue: list[dict] = []
+    today_items: list[dict] = []
+    upcoming: list[dict] = []
+    no_date: list[dict] = []
+    unreadable: list[dict] = []
+
+    for row in rows:
+        item = dict(row)
+        value = item["next_action_date"]
+        if value is not None:
+            try:
+                action_date = date.fromisoformat(value)
+            except (TypeError, ValueError):
+                unreadable.append(item)
+                continue
+
+            if action_date < today_date:
+                overdue.append(item)
+            elif action_date == today_date:
+                today_items.append(item)
+            elif action_date <= horizon_date:
+                upcoming.append(item)
+            continue
+
+        next_action = item["next_action"]
+        if isinstance(next_action, str) and next_action.strip():
+            no_date.append(item)
+
+    overdue.sort(
+        key=lambda item: (item["next_action_date"], item["firm_name"])
+    )
+    today_items.sort(key=lambda item: item["firm_name"])
+    upcoming.sort(
+        key=lambda item: (item["next_action_date"], item["firm_name"])
+    )
+    no_date.sort(key=lambda item: item["firm_name"])
+    unreadable.sort(key=lambda item: item["firm_name"])
+
+    return {
+        "overdue": overdue,
+        "today": today_items,
+        "upcoming": upcoming,
+        "no_date": no_date,
+        "unreadable": unreadable,
+    }
 
 
 def list_opportunities(

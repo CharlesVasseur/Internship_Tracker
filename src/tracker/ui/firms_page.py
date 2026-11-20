@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from datetime import date
+import hashlib
 import sqlite3
 
 import streamlit as st
@@ -97,6 +98,11 @@ def render_firms_page() -> None:
             }
             for firm in shown_firms
         ]
+        filter_state = (countries, priorities, stages, search)
+        filter_hash = hashlib.sha1(
+            repr(filter_state).encode()
+        ).hexdigest()[:8]
+        table_key = f"firms_table_{filter_hash}"
         table_event = st.dataframe(
             rows,
             hide_index=True,
@@ -122,7 +128,7 @@ def render_firms_page() -> None:
             },
             on_select="rerun",
             selection_mode="single-row",
-            key="firms_table",
+            key=table_key,
         )
 
         selected_rows = table_event.selection.rows
@@ -251,12 +257,26 @@ def render_firms_page() -> None:
                             format="YYYY-MM-DD",
                         )
                         next_action = st.text_input(
-                            "Next action",
+                            "Next action (what to do)",
                             value=application["next_action"] or "",
                         )
-                        next_action_date = st.text_input(
-                            "Next action date (YYYY-MM-DD)",
-                            value=application["next_action_date"] or "",
+                        stored_next_action_date = application["next_action_date"]
+                        picker_value = None
+                        if stored_next_action_date is not None:
+                            try:
+                                picker_value = date.fromisoformat(
+                                    stored_next_action_date
+                                )
+                            except (TypeError, ValueError):
+                                st.warning(
+                                    f"Stored next action date "
+                                    f"'{stored_next_action_date}' is not a valid date; "
+                                    "saving here replaces it."
+                                )
+                        next_action_date = st.date_input(
+                            "Next action date",
+                            value=picker_value,
+                            format="YYYY-MM-DD",
                         )
                         notes = st.text_area(
                             "Notes",
