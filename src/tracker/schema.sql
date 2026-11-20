@@ -111,3 +111,6 @@ CREATE TABLE IF NOT EXISTS point_events (
 
 CREATE INDEX IF NOT EXISTS idx_firms_profile_employer_key
     ON firms(profile, employer_key);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_identity
+    ON opportunities(firm_id, fingerprint);
