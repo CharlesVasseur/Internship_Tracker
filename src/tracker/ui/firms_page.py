@@ -84,6 +84,7 @@ def render_firms_page() -> None:
         rows = [
             {
                 "Name": firm["name"],
+                "Link": firm["careers_url"],
                 "Country": firm["country"],
                 "City": firm["city"],
                 "Priority": firm["priority"],
@@ -91,10 +92,8 @@ def render_firms_page() -> None:
                 "Applications": firm["n_applications"],
                 "Next action": firm["next_action_date"],
                 "Category": firm["category"],
-                "Actuarial depth": firm["actuarial_depth"],
                 "Opening window": firm["opening_window"],
                 "Last verified": firm["last_verified"],
-                "Link": firm["careers_url"],
             }
             for firm in shown_firms
         ]
@@ -108,6 +107,7 @@ def render_firms_page() -> None:
             hide_index=True,
             column_order=[
                 "Name",
+                "Link",
                 "Country",
                 "City",
                 "Priority",
@@ -115,10 +115,8 @@ def render_firms_page() -> None:
                 "Applications",
                 "Next action",
                 "Category",
-                "Actuarial depth",
                 "Opening window",
                 "Last verified",
-                "Link",
             ],
             column_config={
                 "Link": st.column_config.LinkColumn(
@@ -247,7 +245,7 @@ def render_firms_page() -> None:
                     ):
                         stage_index = APPLICATION_STAGES.index(application["stage"])
                         new_stage = st.selectbox(
-                            "Stage",
+                            "Stage of this application",
                             APPLICATION_STAGES,
                             index=stage_index,
                         )
@@ -255,6 +253,11 @@ def render_firms_page() -> None:
                             "Date of the change",
                             value=date.today(),
                             format="YYYY-MM-DD",
+                            help=(
+                                "Written in the log when you change the stage. "
+                                "Also used as the submitted date the first time "
+                                "you set Applied."
+                            ),
                         )
                         next_action = st.text_input(
                             "Next action (what to do)",
@@ -284,10 +287,15 @@ def render_firms_page() -> None:
                             help="Tick and press Save to remove the date.",
                         )
                         notes = st.text_area(
-                            "Notes",
+                            "Application notes",
                             value=application["notes"] or "",
+                            help=(
+                                "One free text for this application. It is "
+                                "replaced each time you save. For dated history, "
+                                "use the activity log below."
+                            ),
                         )
-                        save_submitted = st.form_submit_button("Save")
+                        save_submitted = st.form_submit_button("Save application")
 
                     if save_submitted:
                         try:
@@ -313,6 +321,11 @@ def render_firms_page() -> None:
                         connection,
                         application_id,
                     )
+                    st.markdown("**Activity log**")
+                    st.caption(
+                        "Dated history. Every stage change is added automatically. "
+                        "Entries cannot be edited."
+                    )
                     if activities:
                         activity_rows = [
                             {
@@ -335,8 +348,8 @@ def render_firms_page() -> None:
                         clear_on_submit=True,
                         border=True,
                     ):
-                        note_text = st.text_input("Add a note to the log")
-                        note_submitted = st.form_submit_button("Add note")
+                        note_text = st.text_input("New log entry")
+                        note_submitted = st.form_submit_button("Add to log")
 
                     if note_submitted:
                         try:
@@ -351,13 +364,19 @@ def render_firms_page() -> None:
                         else:
                             st.rerun()
 
+            st.divider()
+            st.subheader("Add another application for this firm")
+            st.caption(
+                "Only for a second role or season at the same firm. "
+                "The applications above are edited in their own boxes."
+            )
             with st.form(
                 key=f"add_app_{selected_firm['firm_id']}",
                 clear_on_submit=False,
                 border=True,
             ):
                 new_application_stage = st.selectbox(
-                    "Stage",
+                    "Stage of the new application",
                     APPLICATION_STAGES,
                     index=0,
                 )
