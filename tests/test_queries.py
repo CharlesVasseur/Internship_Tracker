@@ -10,6 +10,7 @@ from tracker.queries import (
     get_filter_options,
     list_applications,
     list_activities,
+    list_checks,
     list_firms,
     list_next_actions,
     list_opportunities,
@@ -155,6 +156,8 @@ def test_latest_application_stage_and_application_free_firm(tmp_path):
         assert example["stage"] == "Contacted"
         assert pension["stage"] is None
         assert pension["next_action_date"] is None
+        assert pension["last_successful_check"] is None
+        assert pension["last_check_status"] is None
     finally:
         connection.close()
 
@@ -389,6 +392,49 @@ def test_list_opportunities_returns_none_then_orders_last_seen(tmp_path):
             "Older role",
             "Unknown date role",
         ]
+        assert all("missing_count" in opportunity for opportunity in opportunities)
+    finally:
+        connection.close()
+
+
+def test_list_checks_returns_newest_rows_for_one_firm_and_honours_limit(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        for firm_id, finished_at in (
+            (example_id, "2026-11-18T10:00:00"),
+            (example_id, "2026-11-19T10:00:00"),
+            (example_id, "2026-11-19T10:00:00"),
+            (pension_id, "2026-11-20T10:00:00"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO checks (
+                    firm_id, started_at, finished_at, result, n_results
+                ) VALUES (?, ?, ?, 'ok', 1)
+                """,
+                (firm_id, finished_at, finished_at),
+            )
+        connection.commit()
+        checks = list_checks(connection, example_id, limit=2)
+        assert [check["finished_at"] for check in checks] == [
+            "2026-11-19T10:00:00",
+            "2026-11-19T10:00:00",
+        ]
+        assert [check["id"] for check in checks] == sorted(
+            (check["id"] for check in checks),
+            reverse=True,
+        )
+        assert set(checks[0]) == {
+            "id",
+            "started_at",
+            "finished_at",
+            "result",
+            "http_status",
+            "n_results",
+            "error",
+            "evidence_snippet",
+        }
+        assert len(list_checks(connection, pension_id)) == 1
     finally:
         connection.close()
 

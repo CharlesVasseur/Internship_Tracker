@@ -13,6 +13,8 @@ from tracker.models import (
 from tracker.service import (
     add_application,
     add_note,
+    MANUAL_CHECK_EVIDENCE,
+    record_manual_check,
     save_application,
     update_firm_link,
 )
@@ -485,6 +487,122 @@ def test_named_activity_constants():
     assert ACTIVITY_CREATED == "application_created"
     assert ACTIVITY_STAGE_CHANGE == "stage_change"
     assert ACTIVITY_NOTE == "note"
+
+
+def test_record_manual_check_updates_firm_without_changing_opportunities(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, title, location, url, state, first_seen, last_seen,
+                missing_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                firm_a,
+                "Sample role",
+                "Paris",
+                "https://example.test/role",
+                "Open",
+                "2026-11-01",
+                "2026-11-19",
+                2,
+            ),
+        )
+        connection.commit()
+        before_opportunity = connection.execute(
+            """
+            SELECT state, missing_count, last_seen
+            FROM opportunities
+            WHERE firm_id = ?
+            """,
+            (firm_a,),
+        ).fetchone()
+
+        check_id = record_manual_check(
+            connection,
+            firm_a,
+            "2026-11-20T13:35:55",
+        )
+
+        check = connection.execute(
+            """
+            SELECT firm_id, started_at, finished_at, result, http_status,
+                   n_results, error, evidence_snippet
+            FROM checks
+            WHERE id = ?
+            """,
+            (check_id,),
+        ).fetchone()
+        firm = connection.execute(
+            """
+            SELECT last_check_status, last_successful_check
+            FROM firms
+            WHERE id = ?
+            """,
+            (firm_a,),
+        ).fetchone()
+        after_opportunity = connection.execute(
+            """
+            SELECT state, missing_count, last_seen
+            FROM opportunities
+            WHERE firm_id = ?
+            """,
+            (firm_a,),
+        ).fetchone()
+
+        assert tuple(check) == (
+            firm_a,
+            "2026-11-20T13:35:55",
+            "2026-11-20T13:35:55",
+            "ok",
+            None,
+            None,
+            None,
+            MANUAL_CHECK_EVIDENCE,
+        )
+        assert tuple(firm) == ("ok", "2026-11-20T13:35:55")
+        assert tuple(after_opportunity) == tuple(before_opportunity)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM checks WHERE firm_id = ?",
+            (firm_a,),
+        ).fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("bad_timestamp", ["not-a-date", "2026-13-40T00:00:00"])
+def test_record_manual_check_rejects_bad_timestamp_without_writes(
+    tmp_path,
+    bad_timestamp,
+):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            record_manual_check(connection, firm_a, bad_timestamp)
+        assert connection.execute("SELECT COUNT(*) FROM checks").fetchone()[0] == 0
+        firm = connection.execute(
+            """
+            SELECT last_check_status, last_successful_check
+            FROM firms
+            WHERE id = ?
+            """,
+            (firm_a,),
+        ).fetchone()
+        assert tuple(firm) == (None, None)
+    finally:
+        connection.close()
+
+
+def test_record_manual_check_unknown_firm_writes_nothing(tmp_path):
+    connection, _, _, _, _ = seed_database(tmp_path)
+    try:
+        with pytest.raises(LookupError):
+            record_manual_check(connection, -1, "2026-11-20T13:35:55")
+        assert connection.execute("SELECT COUNT(*) FROM checks").fetchone()[0] == 0
+    finally:
+        connection.close()
 
 
 def test_valid_firm_link_updates_url_and_type(tmp_path):

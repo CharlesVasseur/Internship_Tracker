@@ -38,6 +38,8 @@ def list_firms(
             f.last_verified,
             f.careers_url,
             f.source_type,
+            f.last_successful_check,
+            f.last_check_status,
             (
                 SELECT COUNT(*)
                 FROM applications AS app
@@ -286,7 +288,7 @@ def list_opportunities(
     rows = conn.execute(
         """
         SELECT id, title, location, url, state, first_seen, last_seen,
-               is_internship
+               missing_count, is_internship
         FROM opportunities
         WHERE firm_id = ?
         ORDER BY
@@ -294,6 +296,26 @@ def list_opportunities(
             last_seen DESC
         """,
         (firm_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_checks(
+    conn: sqlite3.Connection,
+    firm_id: int,
+    limit: int = 10,
+) -> list[dict]:
+    """Return the newest checks for one firm."""
+    rows = conn.execute(
+        """
+        SELECT id, started_at, finished_at, result, http_status,
+               n_results, error, evidence_snippet
+        FROM checks
+        WHERE firm_id = ?
+        ORDER BY finished_at DESC, id DESC
+        LIMIT ?
+        """,
+        (firm_id, limit),
     ).fetchall()
     return [dict(row) for row in rows]
 

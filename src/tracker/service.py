@@ -1,6 +1,6 @@
-"""Write services for application and activity records."""
+"""Write services for application, activity, and manual check records."""
 
-from datetime import date
+from datetime import date, datetime
 import sqlite3
 from urllib.parse import urlsplit
 
@@ -10,6 +10,8 @@ from tracker.models import (
     ACTIVITY_STAGE_CHANGE,
     APPLICATION_STAGES,
 )
+
+MANUAL_CHECK_EVIDENCE = "manual: checked by user"
 
 
 def _nullable_text(value: str | None) -> str | None:
@@ -275,3 +277,42 @@ def update_firm_link(
                 updated += cursor.rowcount
 
     return {"updated": updated}
+
+
+def record_manual_check(
+    conn: sqlite3.Connection,
+    firm_id: int,
+    checked_at: str,
+) -> int:
+    """Record a user's manual check without changing opportunities."""
+    try:
+        datetime.fromisoformat(checked_at)
+    except (TypeError, ValueError) as error:
+        raise ValueError("checked_at must be an ISO datetime string") from error
+
+    with conn:
+        firm = conn.execute(
+            "SELECT id FROM firms WHERE id = ?",
+            (firm_id,),
+        ).fetchone()
+        if firm is None:
+            raise LookupError(f"unknown firm id: {firm_id}")
+
+        cursor = conn.execute(
+            """
+            INSERT INTO checks (
+                firm_id, started_at, finished_at, result, http_status,
+                n_results, error, evidence_snippet
+            ) VALUES (?, ?, ?, 'ok', NULL, NULL, NULL, ?)
+            """,
+            (firm_id, checked_at, checked_at, MANUAL_CHECK_EVIDENCE),
+        )
+        conn.execute(
+            """
+            UPDATE firms
+            SET last_check_status = 'ok', last_successful_check = ?
+            WHERE id = ?
+            """,
+            (checked_at, firm_id),
+        )
+        return cursor.lastrowid

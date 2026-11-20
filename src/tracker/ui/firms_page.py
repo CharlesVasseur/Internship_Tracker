@@ -1,7 +1,7 @@
 """Read-only Firms page."""
 
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import sqlite3
 
@@ -15,6 +15,7 @@ from tracker.queries import (
     get_filter_options,
     list_activities,
     list_applications,
+    list_checks,
     list_firms,
     list_opportunities,
     list_other_offices,
@@ -23,6 +24,7 @@ from tracker.service import (
     add_application,
     add_note,
     save_application,
+    record_manual_check,
     update_firm_link,
 )
 
@@ -91,6 +93,11 @@ def render_firms_page() -> None:
                 "Latest stage": firm["stage"],
                 "Applications": firm["n_applications"],
                 "Next action": firm["next_action_date"],
+                "Last checked": (
+                    firm["last_successful_check"][:10]
+                    if firm["last_successful_check"] is not None
+                    else "never"
+                ),
                 "Category": firm["category"],
                 "Opening window": firm["opening_window"],
                 "Last verified": firm["last_verified"],
@@ -114,6 +121,7 @@ def render_firms_page() -> None:
                 "Latest stage",
                 "Applications",
                 "Next action",
+                "Last checked",
                 "Category",
                 "Opening window",
                 "Last verified",
@@ -393,6 +401,68 @@ def render_firms_page() -> None:
                 else:
                     st.rerun()
 
+            st.subheader("Monitoring")
+            last_successful_check = detail["last_successful_check"]
+            last_check_status = detail["last_check_status"] or "-"
+            st.write(
+                "Last successful check: "
+                f"{last_successful_check or 'never'} "
+                f"(status: {last_check_status})"
+            )
+            with st.form(
+                key=f"manual_check_{selected_firm['firm_id']}",
+                clear_on_submit=False,
+                border=True,
+            ):
+                manual_check_submitted = st.form_submit_button(
+                    "I checked this page today"
+                )
+
+            if manual_check_submitted:
+                try:
+                    record_manual_check(
+                        connection,
+                        selected_firm["firm_id"],
+                        datetime.now().replace(microsecond=0).isoformat(),
+                    )
+                except (ValueError, LookupError, sqlite3.Error) as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
+
+            st.caption(
+                "Records that YOU looked at the saved link. "
+                "It does not change any opportunity."
+            )
+            st.markdown("**Check log**")
+            checks = list_checks(connection, selected_firm["firm_id"])
+            if checks:
+                check_rows = [
+                    {
+                        "Finished": check["finished_at"],
+                        "Result": check["result"],
+                        "Results": check["n_results"],
+                        "HTTP": check["http_status"],
+                        "Error": check["error"],
+                        "Evidence": check["evidence_snippet"],
+                    }
+                    for check in checks
+                ]
+                st.dataframe(
+                    check_rows,
+                    hide_index=True,
+                    column_order=[
+                        "Finished",
+                        "Result",
+                        "Results",
+                        "HTTP",
+                        "Error",
+                        "Evidence",
+                    ],
+                )
+            else:
+                st.caption("No check yet.")
+
             st.subheader("Opportunities")
             opportunities = list_opportunities(
                 connection,
@@ -403,15 +473,33 @@ def render_firms_page() -> None:
                     {
                         "Title": opportunity["title"],
                         "Location": opportunity["location"],
-                        "URL": opportunity["url"],
                         "State": opportunity["state"],
                         "First seen": opportunity["first_seen"],
                         "Last seen": opportunity["last_seen"],
-                        "Internship": opportunity["is_internship"],
+                        "Missing count": opportunity["missing_count"],
+                        "Link": opportunity["url"],
                     }
                     for opportunity in opportunities
                 ]
-                st.dataframe(opportunity_rows, hide_index=True)
+                st.dataframe(
+                    opportunity_rows,
+                    hide_index=True,
+                    column_order=[
+                        "Title",
+                        "Location",
+                        "State",
+                        "First seen",
+                        "Last seen",
+                        "Missing count",
+                        "Link",
+                    ],
+                    column_config={
+                        "Link": st.column_config.LinkColumn(
+                            "Link",
+                            display_text="Open",
+                        ),
+                    },
+                )
             else:
                 st.info(
                     "No opportunities tracked yet. "
