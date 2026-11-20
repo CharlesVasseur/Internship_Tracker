@@ -80,7 +80,7 @@ Stores the application process for a firm and optionally a specific opportunity.
 | next_action_date | TEXT | Date of the next action. | |
 | priority_override | TEXT | Application-specific priority. | P1, P2, P3, P4 |
 | links | TEXT | Related application links. | |
-| notes | TEXT | Free-form application notes. | |
+| notes | TEXT | Free text from earlier versions. No longer edited in the UI; shown read-only. New notes are written as activity log entries. | |
 
 ## activities
 

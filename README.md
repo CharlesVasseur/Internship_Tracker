@@ -31,7 +31,7 @@ $env:TRACKER_DB="data\charles_test.db"
 - **Pipeline** shows application counts by stage and a read-only view filtered by selected stages.
 - **Firms** shows tracked firms and saved source links.
 
-Firms rows can be selected to open a detail section where applications, notes, next actions and a saved careers link are edited; every stage change is logged.
+Firms rows can be selected to open a detail section where applications, progress as dated log entries, next actions and a saved careers link are edited; notes from earlier versions are shown read-only, and every stage change is logged.
 
 ## Limits
 

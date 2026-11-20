@@ -286,15 +286,6 @@ def render_firms_page() -> None:
                             value=False,
                             help="Tick and press Save to remove the date.",
                         )
-                        notes = st.text_area(
-                            "Application notes",
-                            value=application["notes"] or "",
-                            help=(
-                                "One free text for this application. It is "
-                                "replaced each time you save. For dated history, "
-                                "use the activity log below."
-                            ),
-                        )
                         save_submitted = st.form_submit_button("Save application")
 
                     if save_submitted:
@@ -310,12 +301,19 @@ def render_firms_page() -> None:
                                     if clear_next_action_date
                                     else next_action_date
                                 ),
-                                notes=notes,
+                                notes=application["notes"],
                             )
                         except (ValueError, LookupError, sqlite3.Error) as error:
                             st.error(str(error))
                         else:
                             st.rerun()
+
+                    if application["notes"] and application["notes"].strip():
+                        st.markdown("**Earlier notes**")
+                        st.text(application["notes"])
+                        st.caption(
+                            "Read-only. Write new notes as log entries below."
+                        )
 
                     activities = list_activities(
                         connection,
