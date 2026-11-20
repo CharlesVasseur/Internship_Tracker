@@ -4,7 +4,40 @@
 
 A local Python dashboard that helps follow internship opportunities at selected firms: it tracks firms and applications, checks careers sources for matching openings, and reminds you of next actions.
 
-**Status:** the *triage* module is complete and has run live. It decides, for each firm, how its careers page can be monitored (feed, structured data, recruiting system, plain HTML, JavaScript-only, or manual). The first live run (T6) on the 19 surveyed firms gave 1 automatic, 11 probable, 1 manual, 2 blocked and 4 unresolved, so the gate is UNDECIDED under the contract (see `docs/t6_handoff.md`). The module is also tested offline (synthetic scenarios, gap tests, random-input tests) on Windows, macOS and Linux through continuous integration. There is no dashboard yet.
+**Status:** the *triage* module is complete and has run live. It decides, for each firm, how its careers page can be monitored (feed, structured data, recruiting system, plain HTML, JavaScript-only, or manual). The first live run (T6) on the 19 surveyed firms gave 1 automatic, 11 probable, 1 manual, 2 blocked and 4 unresolved, so the gate is UNDECIDED under the contract (see `docs/t6_handoff.md`). The module is also tested offline (synthetic scenarios, gap tests, random-input tests) on Windows, macOS and Linux through continuous integration. The local dashboard includes Next actions, Pipeline and Firms pages backed by SQLite.
+
+## Run the app
+
+From the project folder in PowerShell:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m streamlit run src/tracker/ui/app.py
+```
+
+The database is `data/charles.db` unless the `TRACKER_DB` environment variable points elsewhere. Press `Ctrl+C` in the PowerShell window to stop the server. Streamlit is installed with `pip install streamlit`; it is also available through the optional `ui` dependency group in `pyproject.toml`.
+
+## Try changes on a copy
+
+Copy `data\charles.db` to `data\charles_test.db`, then point the app at the copy:
+
+```powershell
+$env:TRACKER_DB="data\charles_test.db"
+```
+
+## Pages
+
+- **Next actions** groups pending work by overdue, today, the next 7 days, and no date.
+- **Pipeline** shows application counts by stage and a read-only view filtered by selected stages.
+- **Firms** shows tracked firms and saved source links.
+
+Firms rows can be selected to open a detail section where applications, notes, next actions and a saved careers link are edited; every stage change is logged.
+
+## Limits
+
+- Links imported from the Excel workbook are mostly saved search links, not job listings.
+- Nothing checks careers pages yet.
+- Points are not implemented yet.
 
 | Step | Work | State |
 |---|---|---|

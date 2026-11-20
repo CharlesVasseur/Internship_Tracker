@@ -122,6 +122,62 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     }
 
 
+def count_by_stage(conn: sqlite3.Connection) -> list[tuple[str, int]]:
+    """Return application counts for every stage in pipeline order."""
+    counts = {
+        row["stage"]: row["count"]
+        for row in conn.execute(
+            """
+            SELECT stage, COUNT(*) AS count
+            FROM applications
+            GROUP BY stage
+            """
+        )
+    }
+    return [(stage, counts.get(stage, 0)) for stage in APPLICATION_STAGES]
+
+
+def list_pipeline(
+    conn: sqlite3.Connection,
+    stages: list[str],
+) -> list[dict]:
+    """Return applications in selected stages, ordered for pipeline review."""
+    if not stages:
+        return []
+
+    placeholders = ", ".join("?" for _ in stages)
+    stage_order = " ".join(
+        f"WHEN '{stage}' THEN {index}"
+        for index, stage in enumerate(APPLICATION_STAGES)
+    )
+    sql = f"""
+        SELECT
+            app.id AS application_id,
+            f.id AS firm_id,
+            f.name AS firm_name,
+            f.country,
+            f.city,
+            f.priority,
+            app.stage,
+            app.next_action,
+            app.next_action_date,
+            app.submitted_date
+        FROM applications AS app
+        JOIN firms AS f ON f.id = app.firm_id
+        WHERE app.stage IN ({placeholders})
+        ORDER BY
+            CASE app.stage
+                {stage_order}
+                ELSE {len(APPLICATION_STAGES)}
+            END,
+            CASE WHEN app.next_action_date IS NULL THEN 1 ELSE 0 END,
+            app.next_action_date,
+            f.name
+    """
+    rows = conn.execute(sql, stages).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_firm(conn: sqlite3.Connection, firm_id: int) -> dict | None:
     """Return every column of one firm, or None when it does not exist."""
     row = conn.execute(

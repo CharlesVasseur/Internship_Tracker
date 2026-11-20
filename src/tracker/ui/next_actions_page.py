@@ -55,7 +55,7 @@ def render_next_actions_page() -> None:
         sections = (
             ("Overdue", "overdue", True),
             ("Today", "today", False),
-            ("Upcoming", "upcoming", False),
+            ("Next 7 days", "upcoming", False),
             ("No date", "no_date", False),
         )
         for title, key, include_days_late in sections:

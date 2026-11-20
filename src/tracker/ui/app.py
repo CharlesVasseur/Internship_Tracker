@@ -2,6 +2,7 @@ import streamlit as st
 
 from tracker.ui.firms_page import render_firms_page
 from tracker.ui.next_actions_page import render_next_actions_page
+from tracker.ui.pipeline_page import render_pipeline_page
 
 
 st.set_page_config(
@@ -21,5 +22,11 @@ next_actions_page = st.Page(
     icon=":material/checklist:",
 )
 
-navigation = st.navigation([next_actions_page, firms_page])
+pipeline_page = st.Page(
+    render_pipeline_page,
+    title="Pipeline",
+    icon=":material/view_kanban:",
+)
+
+navigation = st.navigation([next_actions_page, pipeline_page, firms_page])
 navigation.run()

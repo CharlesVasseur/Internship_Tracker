@@ -119,6 +119,48 @@ def test_same_stage_updates_fields_without_activity(tmp_path):
         connection.close()
 
 
+def test_clearing_next_action_date_keeps_stage_and_writes_no_activity(tmp_path):
+    connection, _, _, application_id, _ = seed_database(tmp_path)
+    try:
+        save_application(
+            connection,
+            application_id,
+            stage="To research",
+            on_date="2026-11-20",
+            next_action="Review",
+            next_action_date="2026-11-21",
+            notes="",
+        )
+        before = connection.execute(
+            "SELECT COUNT(*) FROM activities WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()[0]
+
+        save_application(
+            connection,
+            application_id,
+            stage="To research",
+            on_date="2026-11-20",
+            next_action="Review",
+            next_action_date=None,
+            notes="",
+        )
+
+        row = connection.execute(
+            "SELECT stage, next_action_date FROM applications WHERE id = ?",
+            (application_id,),
+        ).fetchone()
+        after = connection.execute(
+            "SELECT COUNT(*) FROM activities WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()[0]
+        assert row["stage"] == "To research"
+        assert row["next_action_date"] is None
+        assert after == before
+    finally:
+        connection.close()
+
+
 def test_applied_sets_submitted_date_only_when_empty(tmp_path):
     connection, _, _, application_id, _ = seed_database(tmp_path)
     try:

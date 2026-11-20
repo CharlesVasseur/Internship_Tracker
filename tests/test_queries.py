@@ -5,6 +5,7 @@ import pytest
 from tracker.db import connect, init_db
 from tracker.models import APPLICATION_STAGES
 from tracker.queries import (
+    count_by_stage,
     get_firm,
     get_filter_options,
     list_applications,
@@ -13,6 +14,7 @@ from tracker.queries import (
     list_next_actions,
     list_opportunities,
     list_other_offices,
+    list_pipeline,
 )
 
 
@@ -189,6 +191,116 @@ def test_application_counts_are_zero_one_and_two(tmp_path):
             "Sample Re": 1,
             "Test Pension": 0,
         }
+    finally:
+        connection.close()
+
+
+def test_count_by_stage_returns_all_stages_in_pipeline_order(tmp_path):
+    connection, _, _ = seed_database(tmp_path / "tracker.db")
+    try:
+        counts = count_by_stage(connection)
+        assert counts == [
+            ("To research", 1),
+            ("Contacted", 1),
+            ("Applied", 1),
+            ("Online assessment", 0),
+            ("Online interview", 0),
+            ("In-person interview", 0),
+            ("Offer", 0),
+            ("Rejected", 0),
+        ]
+    finally:
+        connection.close()
+
+
+def test_list_pipeline_filters_sorts_and_includes_rejected_only_when_selected(tmp_path):
+    init_db(tmp_path / "tracker.db")
+    connection = connect(tmp_path / "tracker.db")
+    try:
+        firms = [
+            ("Example Firm", "France", "Paris", "P1"),
+            ("Sample Re", "Switzerland", "Zurich", "P2"),
+            ("Test Pension", "Spain", "Madrid", "P3"),
+        ]
+        firm_ids = {}
+        for name, country, city, priority in firms:
+            connection.execute(
+                """
+                INSERT INTO firms (
+                    profile, name, employer_key, country, city, priority
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("profile", name, name.lower(), country, city, priority),
+            )
+            firm_ids[name] = connection.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
+
+        applications = [
+            ("Example Firm", "Contacted", "Review", "2026-12-02", "2026-11-20"),
+            ("Sample Re", "Contacted", "Call", None, "2026-11-21"),
+            ("Test Pension", "Applied", "Submit", "2026-12-01", "2026-11-22"),
+            ("Test Pension", "Contacted", "Confirm", "2026-12-02", "2026-11-24"),
+            ("Example Firm", "Rejected", "Archive", None, "2026-11-23"),
+            ("Test Pension", "To research", "Research", "2026-12-03", None),
+        ]
+        for name, stage, next_action, next_action_date, submitted_date in applications:
+            connection.execute(
+                """
+                INSERT INTO applications (
+                    firm_id, stage, next_action, next_action_date, submitted_date
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    firm_ids[name],
+                    stage,
+                    next_action,
+                    next_action_date,
+                    submitted_date,
+                ),
+            )
+        connection.commit()
+
+        assert list_pipeline(connection, []) == []
+
+        rows = list_pipeline(connection, ["Contacted", "Applied"])
+        assert [row["firm_name"] for row in rows] == [
+            "Example Firm",
+            "Test Pension",
+            "Sample Re",
+            "Test Pension",
+        ]
+        assert all(row["stage"] != "Rejected" for row in rows)
+        assert all(row["stage"] != "To research" for row in rows)
+        assert [row["next_action_date"] for row in rows[:3]] == [
+            "2026-12-02",
+            "2026-12-02",
+            None,
+        ]
+        assert [row["next_action_date"] for row in rows] == [
+            "2026-12-02",
+            "2026-12-02",
+            None,
+            "2026-12-01",
+        ]
+
+        rejected_rows = list_pipeline(connection, ["Rejected"])
+        assert [row["firm_name"] for row in rejected_rows] == ["Example Firm"]
+        assert rejected_rows[0]["stage"] == "Rejected"
+        assert rejected_rows[0]["submitted_date"] == "2026-11-23"
+
+        pipeline_rows = list_pipeline(
+            connection,
+            ["To research", "Contacted", "Applied", "Rejected"],
+        )
+        assert [row["stage"] for row in pipeline_rows] == [
+            "To research",
+            "Contacted",
+            "Contacted",
+            "Contacted",
+            "Applied",
+            "Rejected",
+        ]
     finally:
         connection.close()
 

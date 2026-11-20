@@ -17,7 +17,7 @@ Stores one firm row for a profile and country office.
 | role_types | TEXT | Role types listed for the office or firm. | |
 | priority | TEXT | Review priority. | P1, P2, P3, P4 |
 | careers_url | TEXT | Careers page or direct application link. | |
-| source_type | TEXT | Source text classification. | `search_link`, `direct_posting`, or NULL |
+| source_type | TEXT | Source text classification. | `search_link`, `direct_posting`, `careers_page`, or NULL |
 | source_config | TEXT | JSON text with future source configuration. | |
 | monitoring | TEXT | Whether monitoring is automated or manual. | NOT NULL; default `manual`; `automated` or `manual` |
 | eligibility | TEXT | Eligibility text. | |
@@ -31,6 +31,13 @@ Stores one firm row for a profile and country office.
 | last_check_status | TEXT | Status recorded for the latest check. | |
 
 The unique key is `(profile, name, country, city)`. The `profile, employer_key` pair is indexed for grouping and lookup.
+
+`source_type` describes how the saved link was obtained or classified:
+
+- `search_link`: an imported or user-saved search page rather than a direct listing.
+- `direct_posting`: a link to a specific job or internship posting.
+- `careers_page`: a link to an employer careers or jobs page.
+- `NULL`: no source classification is stored yet.
 
 ## opportunities
 
@@ -88,6 +95,12 @@ Stores dated events belonging to an application.
 | notes | TEXT | Activity details. | |
 | outcome | TEXT | Outcome or result of the activity. | |
 
+### Activity types
+
+- `application_created`: a new application was created.
+- `stage_change`: an application moved from one stage to another.
+- `note`: a free-form note was added to the application log.
+
 ## checks
 
 Stores the result of one source check for a firm.
@@ -134,4 +147,4 @@ A separate sources table is not built yet.
 
 ## Not built yet
 
-The `opportunities`, `checks`, and `point_events` tables are created, but nothing writes to them yet. The Excel importer writes firms and applications only.
+The `opportunities`, `checks`, and `point_events` tables are created, but nothing writes to them yet. The Excel importer writes firms and applications only. Opportunities, checks, and point_events are still unused.

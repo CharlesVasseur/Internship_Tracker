@@ -278,6 +278,11 @@ def render_firms_page() -> None:
                             value=picker_value,
                             format="YYYY-MM-DD",
                         )
+                        clear_next_action_date = st.checkbox(
+                            "Clear the next action date",
+                            value=False,
+                            help="Tick and press Save to remove the date.",
+                        )
                         notes = st.text_area(
                             "Notes",
                             value=application["notes"] or "",
@@ -292,7 +297,11 @@ def render_firms_page() -> None:
                                 stage=new_stage,
                                 on_date=change_date,
                                 next_action=next_action,
-                                next_action_date=next_action_date,
+                                next_action_date=(
+                                    None
+                                    if clear_next_action_date
+                                    else next_action_date
+                                ),
                                 notes=notes,
                             )
                         except (ValueError, LookupError, sqlite3.Error) as error:
