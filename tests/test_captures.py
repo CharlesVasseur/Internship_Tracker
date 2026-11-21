@@ -199,3 +199,170 @@ def test_entry_without_body_cannot_show_or_export(tmp_path):
     from tracker.captures import export_entry, show_head
     assert not show_head(entry, 10).ok
     assert not export_entry(entry, FIXTURE_ROOT / "transport_error.txt").ok
+
+
+def test_show_links_quotes_tags_empty_filter_duplicates_and_limit(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    html = (
+        '<a class="first" href="/relative/jobs">  Example <span>Firm</span>  </a>'
+        "<a href='https://careers.example.test/Apply?x=1' title='Job'>Apply</a>"
+        "<a title='Empty' href='/relative/jobs'></a>"
+        "<a href=\"/other\">Other <b>role</b></a>"
+    )
+    add_response(cache, "https://links.example.test/page", html.encode("utf-8"))
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "links.example", "--links", "3",
+    ]) == 0
+    output = capsys.readouterr()
+    assert output.out.splitlines() == [
+        "/relative/jobs\tExample Firm",
+        "https://careers.example.test/Apply?x=1\tApply",
+        "/other\tOther role",
+    ]
+    assert "4 anchors matched" in output.err
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "links.example", "--links", "10",
+        "--contains", "CAREERS",
+    ]) == 0
+    output = capsys.readouterr()
+    assert output.out.strip() == (
+        "https://careers.example.test/Apply?x=1\tApply"
+    )
+    assert "1 anchors matched" in output.err
+
+
+def test_show_links_uses_empty_text_and_summary_counts_duplicates(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    html = (
+        '<a href="/one"><span></span></a>'
+        '<a href="/one">Duplicate</a>'
+        '<a href="/two">Two</a>'
+    )
+    add_response(cache, "https://links.example.test/page", html.encode("utf-8"))
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "links.example", "--links", "1",
+    ]) == 0
+    output = capsys.readouterr()
+    assert output.out == "/one\t(no text)\n"
+    assert "2 anchors matched" not in output.err
+    assert "3 anchors matched" in output.err
+
+
+def test_show_links_negative_and_zero_counts(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    add_response(cache, "https://links.example.test/page", b"<a href='/x'>X</a>")
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "links.example", "--links", "0",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "links.example", "--links", "-2",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err
+
+
+def test_show_around_middle_and_boundaries(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    source = "abcdefghijMARKERklmnopqrst"
+    add_response(cache, "https://around.example.test/page", source.encode("utf-8"))
+    add_response(cache, "https://boundary.example.test/page", b"start-middle-MARKER-middle-end")
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", "MARKER",
+        "--chars", "4", "--max", "1",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert output.strip() == "ghijMARKERklmn"
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "boundary.example", "--around", "start",
+        "--chars", "30",
+    ]) == 0
+    assert capsys.readouterr().out.startswith("start")
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "boundary.example", "--around", "end",
+        "--chars", "30",
+    ]) == 0
+    assert capsys.readouterr().out.strip().endswith("end")
+
+
+def test_show_around_literal_regex_chars_and_limits(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    source = "AA one.two (job) xx one.two (job) zz"
+    add_response(cache, "https://around.example.test/page", source.encode("utf-8"))
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", ".",
+        "--chars", "2", "--max", "2",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert output.count("-----") == 1
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", "(JOB)",
+        "--chars", "2", "--max", "1",
+    ]) == 0
+    assert "(job)" in capsys.readouterr().out.lower()
+
+
+def test_show_around_no_match_and_bad_counts(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    add_response(cache, "https://around.example.test/page", b"plain source")
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", "missing",
+    ]) == 2
+    assert "text not found" in capsys.readouterr().err
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", "plain",
+        "--max", "0",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err
+
+    assert main([
+        "show", "--cache-dir", str(cache),
+        "--url-contains", "around.example", "--around", "plain",
+        "--chars", "-1",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err
+
+
+def test_show_modes_remain_exclusive_and_head_locs_reject_zero(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    add_response(cache, "https://modes.example.test/page", b"<p>Example Firm</p>")
+
+    assert main([
+        "show", "--cache-dir", str(cache), "--url-contains", "modes",
+        "--head", "2", "--links", "2",
+    ]) == 2
+    assert "not allowed" in capsys.readouterr().err
+
+    assert main([
+        "show", "--cache-dir", str(cache), "--url-contains", "modes",
+        "--head", "0",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err
+
+    assert main([
+        "show", "--cache-dir", str(cache), "--url-contains", "modes",
+        "--locs", "0",
+    ]) == 2
+    assert "greater than zero" in capsys.readouterr().err

@@ -11,7 +11,9 @@ if str(SRC) not in sys.path:
 
 from tracker.captures import (
     export_entry,
+    find_around,
     find_jsonld,
+    find_links,
     find_locs,
     read_cache,
     select_entry,
@@ -43,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     show_mode.add_argument("--head", type=int, metavar="N")
     show_mode.add_argument("--locs", type=int, metavar="N")
     show_mode.add_argument("--jsonld", action="store_true")
+    show_mode.add_argument("--links", type=int, metavar="N")
+    show_mode.add_argument("--around", metavar="TEXT")
+    show_parser.add_argument("--contains", metavar="S")
+    show_parser.add_argument("--max", type=int, default=3, metavar="M")
+    show_parser.add_argument("--chars", type=int, default=400, metavar="K")
 
     export_parser = subparsers.add_parser("export")
     export_parser.add_argument("--cache-dir", required=True)
@@ -50,7 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     export_parser.add_argument("--out", required=True)
     export_parser.add_argument("--force", action="store_true")
 
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as error:
+        return int(error.code)
 
     if args.command == "list":
         entries, warnings = read_cache(args.cache_dir)
@@ -88,15 +98,28 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "show":
         if args.head is not None:
+            if args.head <= 0:
+                print("Error: --head count must be greater than zero", file=sys.stderr)
+                return 2
             result = show_head(entry, args.head)
         elif args.locs is not None:
+            if args.locs <= 0:
+                print("Error: --locs count must be greater than zero", file=sys.stderr)
+                return 2
             result = find_locs(entry, args.locs)
+        elif args.links is not None:
+            result = find_links(entry, args.links, contains=args.contains)
+        elif args.around is not None:
+            result = find_around(entry, args.around, max_count=args.max, chars=args.chars)
         else:
             result = find_jsonld(entry)
         if not result.ok:
             print(result.text, file=sys.stderr)
             return 2
-        print(result.text)
+        if result.text:
+            print(result.text)
+        for warning in result.warnings:
+            print(warning, file=sys.stderr)
         return 0
 
     result = export_entry(entry, args.out, force=args.force)

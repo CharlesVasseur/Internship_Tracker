@@ -182,8 +182,8 @@ def decoded_text(entry: CaptureEntry) -> CaptureResult:
 
 def show_head(entry: CaptureEntry, count: int) -> CaptureResult:
     """Return the first N characters of decoded text."""
-    if count < 0:
-        return CaptureResult(False, "Error: --head count cannot be negative")
+    if count <= 0:
+        return CaptureResult(False, "Error: --head count must be greater than zero")
     decoded = decoded_text(entry)
     if not decoded.ok:
         return decoded
@@ -192,8 +192,8 @@ def show_head(entry: CaptureEntry, count: int) -> CaptureResult:
 
 def find_locs(entry: CaptureEntry, count: int) -> CaptureResult:
     """Return the first N text values between <loc> tags."""
-    if count < 0:
-        return CaptureResult(False, "Error: --locs count cannot be negative")
+    if count <= 0:
+        return CaptureResult(False, "Error: --locs count must be greater than zero")
     decoded = decoded_text(entry)
     if not decoded.ok:
         return decoded
@@ -213,6 +213,86 @@ def find_jsonld(entry: CaptureEntry) -> CaptureResult:
     )
     blocks = [match.group(1).strip()[:4000] for match in pattern.finditer(decoded.text)]
     return CaptureResult(True, text="\n\n---\n\n".join(blocks))
+
+
+def find_links(entry: CaptureEntry, count: int, contains: str | None = None) -> CaptureResult:
+    """List matching anchor hrefs and visible text, with one summary warning."""
+    if count <= 0:
+        return CaptureResult(False, "Error: --links count must be greater than zero")
+    decoded = decoded_text(entry)
+    if not decoded.ok:
+        return decoded
+
+    anchor_pattern = re.compile(r"<a\b([^>]*)>(.*?)</a\s*>", re.I | re.S)
+    href_pattern = re.compile(r"\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.I)
+    tag_pattern = re.compile(r"<[^>]*>", re.S)
+    need = contains.lower() if contains is not None else None
+    matched = 0
+    seen: set[str] = set()
+    lines: list[str] = []
+
+    for anchor in anchor_pattern.finditer(decoded.text):
+        href_match = href_pattern.search(anchor.group(1))
+        if href_match is None:
+            continue
+        href = href_match.group(1) if href_match.group(1) is not None else href_match.group(2)
+        if need is not None and need not in href.lower():
+            continue
+        matched += 1
+        if href in seen:
+            continue
+        seen.add(href)
+        if len(lines) < count:
+            visible = tag_pattern.sub("", anchor.group(2))
+            visible = " ".join(visible.split())
+            if not visible:
+                visible = "(no text)"
+            if len(visible) > 120:
+                visible = visible[:120]
+            lines.append(f"{href}\t{visible}")
+
+    summary = f"{matched} anchors matched"
+    return CaptureResult(True, text="\n".join(lines), warnings=(summary,))
+
+
+def find_around(
+    entry: CaptureEntry,
+    text: str,
+    max_count: int = 3,
+    chars: int = 400,
+) -> CaptureResult:
+    """Return raw-text snippets around literal, case-insensitive matches."""
+    if max_count <= 0:
+        return CaptureResult(False, "Error: --max count must be greater than zero")
+    if chars <= 0:
+        return CaptureResult(False, "Error: --chars count must be greater than zero")
+    if not text:
+        return CaptureResult(False, "Error: --around TEXT cannot be empty")
+    decoded = decoded_text(entry)
+    if not decoded.ok:
+        return decoded
+
+    source = decoded.text
+    source_folded = source.lower()
+    needle = text.lower()
+    positions: list[int] = []
+    start = 0
+    while len(positions) < max_count:
+        position = source_folded.find(needle, start)
+        if position < 0:
+            break
+        positions.append(position)
+        start = position + 1
+
+    if not positions:
+        return CaptureResult(False, f"Error: text not found: {text}")
+
+    snippets: list[str] = []
+    for position in positions:
+        snippet_start = max(0, position - chars)
+        snippet_end = min(len(source), position + len(text) + chars)
+        snippets.append(source[snippet_start:snippet_end])
+    return CaptureResult(True, text="\n-----\n".join(snippets))
 
 
 def export_entry(entry: CaptureEntry, out_path: str | Path, force: bool = False) -> CaptureResult:
