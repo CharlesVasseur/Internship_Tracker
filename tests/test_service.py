@@ -21,6 +21,7 @@ from tracker.service import (
     record_manual_check,
     save_application,
     set_application_opportunity,
+    set_opportunity_state,
     update_firm_link,
     update_manual_opportunity,
 )
@@ -1134,6 +1135,95 @@ def test_delete_manual_opportunity_and_application_link_rules(tmp_path):
         other_manual_id = add_manual_opportunity(connection, firm_b, "Other firm role")
         with pytest.raises(ValueError):
             set_application_opportunity(connection, application_a, other_manual_id)
+    finally:
+        connection.close()
+
+
+def test_set_opportunity_state_changes_only_state_for_manual_and_automatic(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        manual_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "Manual role",
+            url="https://example.test/manual",
+            location="Zurich",
+            state="Open",
+        )
+        apply_check_result(
+            connection,
+            firm_a,
+            AdapterResult(
+                "ok",
+                (Listing(
+                    source_job_id="job-1",
+                    title="Automatic role",
+                    location_raw="Zurich",
+                    url="https://example.test/job-1",
+                    posted_date=None,
+                    description="Synthetic",
+                    language="en",
+                ),),
+                ("Synthetic evidence",),
+                None,
+                200,
+            ),
+            started_at="2026-11-20T10:00:00",
+            finished_at="2026-11-20T10:01:00",
+        )
+        automatic_id = connection.execute(
+            "SELECT id FROM opportunities "
+            "WHERE fingerprint NOT LIKE 'manual:%'"
+        ).fetchone()["id"]
+
+        for opportunity_id in (manual_id, automatic_id):
+            before = dict(connection.execute(
+                "SELECT * FROM opportunities WHERE id = ?",
+                (opportunity_id,),
+            ).fetchone())
+            set_opportunity_state(connection, opportunity_id, "No match")
+            after = dict(connection.execute(
+                "SELECT * FROM opportunities WHERE id = ?",
+                (opportunity_id,),
+            ).fetchone())
+
+            assert after["state"] == "No match"
+            for column in before:
+                if column != "state":
+                    assert after[column] == before[column]
+    finally:
+        connection.close()
+
+
+def test_set_opportunity_state_invalid_and_unknown_do_not_change(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        opportunity_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "Manual role",
+            state="Open",
+        )
+        before = dict(connection.execute(
+            "SELECT * FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone())
+
+        with pytest.raises(ValueError):
+            set_opportunity_state(connection, opportunity_id, "Weird")
+
+        after_invalid = dict(connection.execute(
+            "SELECT * FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone())
+        assert after_invalid == before
+
+        with pytest.raises(LookupError):
+            set_opportunity_state(connection, -1, "Open")
+        assert dict(connection.execute(
+            "SELECT * FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()) == before
     finally:
         connection.close()
 

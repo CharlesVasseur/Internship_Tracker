@@ -27,6 +27,7 @@ from tracker.service import (
     add_note,
     save_application,
     set_application_opportunity,
+    set_opportunity_state,
     update_manual_opportunity,
     record_manual_check,
     update_firm_link,
@@ -532,7 +533,27 @@ def render_firms_page() -> None:
                 st.caption("No check yet.")
 
             st.subheader("Opportunities")
-            if opportunities:
+            show_closed = st.checkbox(
+                "Show dismissed and closed opportunities",
+                value=False,
+                key=f"show_closed_{selected_firm['firm_id']}",
+            )
+            shown_opportunities = (
+                opportunities
+                if show_closed
+                else [
+                    opportunity
+                    for opportunity in opportunities
+                    if opportunity["state"] not in ("Closed", "No match")
+                ]
+            )
+            hidden_count = len(opportunities) - len(shown_opportunities)
+            if hidden_count:
+                st.caption(
+                    f"{hidden_count} hidden (closed or no match)."
+                )
+
+            if shown_opportunities:
                 opportunity_rows = [
                     {
                         "Title": opportunity["title"],
@@ -548,7 +569,7 @@ def render_firms_page() -> None:
                         "Last seen": opportunity["last_seen"],
                         "Missing count": opportunity["missing_count"],
                     }
-                    for opportunity in opportunities
+                    for opportunity in shown_opportunities
                 ]
                 st.dataframe(
                     opportunity_rows,
@@ -571,10 +592,43 @@ def render_firms_page() -> None:
                     },
                 )
             else:
-                st.info(
-                    "No opportunities tracked yet. "
-                    "Monitoring is manual for now: use the saved link."
-                )
+                if opportunities:
+                    st.info("No visible opportunities with this filter.")
+                else:
+                    st.info(
+                        "No opportunities tracked yet. "
+                        "Monitoring is manual for now: use the saved link."
+                    )
+
+            for opportunity in shown_opportunities:
+                if opportunity["is_manual"]:
+                    continue
+                with st.expander(f"State: {opportunity['title']}"):
+                    with st.form(
+                        key=f"state_opp_{opportunity['id']}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        new_state = st.selectbox(
+                            "State",
+                            OPPORTUNITY_STATES,
+                            index=OPPORTUNITY_STATES.index(
+                                opportunity["state"]
+                            ),
+                        )
+                        state_submitted = st.form_submit_button("Set state")
+
+                    if state_submitted:
+                        try:
+                            set_opportunity_state(
+                                connection,
+                                opportunity["id"],
+                                new_state,
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
 
             with st.expander("Add an opportunity"):
                 with st.form(

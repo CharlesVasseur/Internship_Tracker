@@ -413,6 +413,29 @@ def update_manual_opportunity(
         )
 
 
+def set_opportunity_state(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    state: str,
+) -> None:
+    """Set one opportunity's state without changing any other fields."""
+    if state not in OPPORTUNITY_STATES:
+        raise ValueError(f"invalid opportunity state: {state}")
+
+    with conn:
+        opportunity = conn.execute(
+            "SELECT id FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if opportunity is None:
+            raise LookupError(f"unknown opportunity id: {opportunity_id}")
+
+        conn.execute(
+            "UPDATE opportunities SET state = ? WHERE id = ?",
+            (state, opportunity_id),
+        )
+
+
 def delete_manual_opportunity(
     conn: sqlite3.Connection,
     opportunity_id: int,

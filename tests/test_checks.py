@@ -231,6 +231,81 @@ def test_failed_and_blocked_do_not_change_opportunities(tmp_path, status):
         connection.close()
 
 
+def test_no_match_listing_stays_no_match_after_three_misses(tmp_path):
+    connection, firm_id, _ = seed_database(tmp_path)
+    try:
+        apply_check_result(
+            connection,
+            firm_id,
+            ok_result(listing()),
+            started_at=STARTED,
+            finished_at=FINISHED_1,
+        )
+        connection.execute(
+            "UPDATE opportunities SET state = 'No match' WHERE firm_id = ?",
+            (firm_id,),
+        )
+
+        third = None
+        for index, finished_at in enumerate(
+            (FINISHED_2, FINISHED_3, "2026-11-20T10:04:00"),
+            start=1,
+        ):
+            third = apply_check_result(
+                connection,
+                firm_id,
+                AdapterResult("empty"),
+                started_at=STARTED,
+                finished_at=finished_at,
+            )
+
+        row = connection.execute(
+            "SELECT missing_count, state FROM opportunities WHERE firm_id = ?",
+            (firm_id,),
+        ).fetchone()
+        assert row["missing_count"] == 3
+        assert row["state"] == "No match"
+        assert third["closed"] == 0
+    finally:
+        connection.close()
+
+
+def test_no_match_listing_reappearing_stays_no_match(tmp_path):
+    connection, firm_id, _ = seed_database(tmp_path)
+    try:
+        apply_check_result(
+            connection,
+            firm_id,
+            ok_result(listing()),
+            started_at=STARTED,
+            finished_at=FINISHED_1,
+        )
+        connection.execute(
+            "UPDATE opportunities SET state = 'No match', missing_count = 2 "
+            "WHERE firm_id = ?",
+            (firm_id,),
+        )
+
+        result = apply_check_result(
+            connection,
+            firm_id,
+            ok_result(listing()),
+            started_at=STARTED,
+            finished_at=FINISHED_2,
+        )
+        row = connection.execute(
+            "SELECT state, missing_count, last_seen "
+            "FROM opportunities WHERE firm_id = ?",
+            (firm_id,),
+        ).fetchone()
+        assert row["state"] == "No match"
+        assert row["missing_count"] == 0
+        assert row["last_seen"] == FINISHED_2
+        assert result["reopened"] == 0
+    finally:
+        connection.close()
+
+
 def test_closed_listing_reopens_when_seen_again(tmp_path):
     connection, firm_id, _ = seed_database(tmp_path)
     try:

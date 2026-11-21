@@ -227,7 +227,10 @@ def apply_check_result(
             missing_count = (row["missing_count"] or 0) + 1
             counts["missing"] += 1
 
-            closed = missing_count >= CLOSE_AFTER_MISSES and row["state"] != "Closed"
+            closed = (
+                missing_count >= CLOSE_AFTER_MISSES
+                and row["state"] not in ("Closed", "No match")
+            )
             new_state = "Closed" if closed else row["state"]
             conn.execute(
                 """
