@@ -8,7 +8,7 @@ import sqlite3
 import streamlit as st
 
 from tracker.db import connect, init_db
-from tracker.models import APPLICATION_STAGES
+from tracker.models import APPLICATION_STAGES, OPPORTUNITY_STATES
 from tracker.queries import (
     get_db_path,
     get_firm,
@@ -22,8 +22,12 @@ from tracker.queries import (
 )
 from tracker.service import (
     add_application,
+    add_manual_opportunity,
+    delete_manual_opportunity,
     add_note,
     save_application,
+    set_application_opportunity,
+    update_manual_opportunity,
     record_manual_check,
     update_firm_link,
 )
@@ -36,7 +40,7 @@ def render_firms_page() -> None:
         st.error(
             f"Database not found: {db_path}\n\n"
             "Import the workbook with:\n"
-            f"python scripts/import_excel.py --xlsx <xlsx> --db {db_path} --profile charles"
+            f"python scripts/import_excel.py --xlsx <xlsx> --db <db_path>"
         )
         st.stop()
 
@@ -242,6 +246,10 @@ def render_firms_page() -> None:
                 connection,
                 selected_firm["firm_id"],
             )
+            opportunities = list_opportunities(
+                connection,
+                selected_firm["firm_id"],
+            )
             if not applications:
                 st.info("No application yet.")
 
@@ -316,6 +324,60 @@ def render_firms_page() -> None:
                                     else next_action_date
                                 ),
                                 notes=application["notes"],
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+
+                    opportunity_options = ["None"] + [
+                        (
+                            f"{opportunity['title']}"
+                            f"{' (deadline ' + opportunity['deadline'] + ')' if opportunity['deadline'] else ''}"
+                        )
+                        for opportunity in opportunities
+                    ]
+                    opportunity_ids = [None] + [
+                        opportunity["id"] for opportunity in opportunities
+                    ]
+                    opportunity_by_label = {
+                        label: opportunity_id
+                        for label, opportunity_id in zip(
+                            opportunity_options,
+                            opportunity_ids,
+                        )
+                    }
+                    current_option = 0
+                    if application["opportunity_id"] is not None:
+                        try:
+                            current_option = opportunity_ids.index(
+                                application["opportunity_id"]
+                            )
+                        except ValueError:
+                            current_option = 0
+                    with st.form(
+                        key=f"link_opp_{application_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        linked_label = st.selectbox(
+                            "Linked opportunity",
+                            opportunity_options,
+                            index=current_option,
+                        )
+                        link_submitted = st.form_submit_button("Save link")
+
+                    if link_submitted:
+                        opportunity_id = (
+                            None
+                            if linked_label == "None"
+                            else opportunity_by_label[linked_label]
+                        )
+                        try:
+                            set_application_opportunity(
+                                connection,
+                                application_id,
+                                opportunity_id,
                             )
                         except (ValueError, LookupError, sqlite3.Error) as error:
                             st.error(str(error))
@@ -470,20 +532,21 @@ def render_firms_page() -> None:
                 st.caption("No check yet.")
 
             st.subheader("Opportunities")
-            opportunities = list_opportunities(
-                connection,
-                selected_firm["firm_id"],
-            )
             if opportunities:
                 opportunity_rows = [
                     {
                         "Title": opportunity["title"],
+                        "Link": opportunity["url"],
                         "Location": opportunity["location"],
+                        "Deadline": opportunity["deadline"],
                         "State": opportunity["state"],
-                        "First seen": opportunity["first_seen"],
+                        "Source": (
+                            "Manual"
+                            if opportunity["is_manual"]
+                            else "Automatic"
+                        ),
                         "Last seen": opportunity["last_seen"],
                         "Missing count": opportunity["missing_count"],
-                        "Link": opportunity["url"],
                     }
                     for opportunity in opportunities
                 ]
@@ -492,12 +555,13 @@ def render_firms_page() -> None:
                     hide_index=True,
                     column_order=[
                         "Title",
+                        "Link",
                         "Location",
+                        "Deadline",
                         "State",
-                        "First seen",
+                        "Source",
                         "Last seen",
                         "Missing count",
-                        "Link",
                     ],
                     column_config={
                         "Link": st.column_config.LinkColumn(
@@ -511,6 +575,152 @@ def render_firms_page() -> None:
                     "No opportunities tracked yet. "
                     "Monitoring is manual for now: use the saved link."
                 )
+
+            with st.expander("Add an opportunity"):
+                with st.form(
+                    key=f"add_opp_{selected_firm['firm_id']}",
+                    clear_on_submit=False,
+                    border=True,
+                ):
+                    add_title = st.text_input("Title")
+                    add_url = st.text_input("Link (https://...)")
+                    add_location = st.text_input("Location")
+                    add_deadline = st.date_input(
+                        "Deadline",
+                        value=None,
+                        format="YYYY-MM-DD",
+                        help="Leave empty if unknown.",
+                    )
+                    add_state = st.selectbox(
+                        "State",
+                        OPPORTUNITY_STATES,
+                        index=OPPORTUNITY_STATES.index("Open"),
+                    )
+                    add_notes = st.text_area("Notes")
+                    add_opportunity_submitted = st.form_submit_button(
+                        "Add opportunity"
+                    )
+
+                if add_opportunity_submitted:
+                    try:
+                        add_manual_opportunity(
+                            connection,
+                            selected_firm["firm_id"],
+                            add_title,
+                            url=add_url,
+                            location=add_location,
+                            deadline=add_deadline,
+                            notes=add_notes,
+                            state=add_state,
+                            on_date=date.today(),
+                        )
+                    except (ValueError, LookupError, sqlite3.Error) as error:
+                        st.error(str(error))
+                    else:
+                        st.rerun()
+
+            for opportunity in opportunities:
+                if not opportunity["is_manual"]:
+                    continue
+                with st.expander(f"Edit: {opportunity['title']}"):
+                    stored_deadline = opportunity["deadline"]
+                    picker_value = None
+                    if stored_deadline is not None:
+                        try:
+                            picker_value = date.fromisoformat(stored_deadline)
+                        except (TypeError, ValueError):
+                            st.warning(
+                                f"Stored deadline '{stored_deadline}' "
+                                "is not a valid date; saving here replaces it."
+                            )
+
+                    with st.form(
+                        key=f"edit_opp_{opportunity['id']}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        edit_title = st.text_input(
+                            "Title",
+                            value=opportunity["title"] or "",
+                        )
+                        edit_url = st.text_input(
+                            "Link (https://...)",
+                            value=opportunity["url"] or "",
+                        )
+                        edit_location = st.text_input(
+                            "Location",
+                            value=opportunity["location"] or "",
+                        )
+                        edit_deadline = st.date_input(
+                            "Deadline",
+                            value=picker_value,
+                            format="YYYY-MM-DD",
+                            help="Leave empty if unknown.",
+                        )
+                        clear_deadline = st.checkbox(
+                            "Clear the deadline",
+                            value=False,
+                        )
+                        edit_state = st.selectbox(
+                            "State",
+                            OPPORTUNITY_STATES,
+                            index=OPPORTUNITY_STATES.index(
+                                opportunity["state"]
+                            ),
+                        )
+                        edit_notes = st.text_area(
+                            "Notes",
+                            value=opportunity["description_text"] or "",
+                        )
+                        edit_submitted = st.form_submit_button(
+                            "Save opportunity"
+                        )
+
+                    if edit_submitted:
+                        try:
+                            update_manual_opportunity(
+                                connection,
+                                opportunity["id"],
+                                title=edit_title,
+                                url=edit_url,
+                                location=edit_location,
+                                deadline=(
+                                    None if clear_deadline else edit_deadline
+                                ),
+                                notes=edit_notes,
+                                state=edit_state,
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+
+                    with st.form(
+                        key=f"del_opp_{opportunity['id']}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        confirm_delete = st.checkbox(
+                            "Yes, delete this opportunity",
+                            value=False,
+                        )
+                        delete_submitted = st.form_submit_button(
+                            "Delete opportunity"
+                        )
+
+                    if delete_submitted:
+                        if not confirm_delete:
+                            st.error("Tick the box to confirm.")
+                        else:
+                            try:
+                                delete_manual_opportunity(
+                                    connection,
+                                    opportunity["id"],
+                                )
+                            except (ValueError, LookupError, sqlite3.Error) as error:
+                                st.error(str(error))
+                            else:
+                                st.rerun()
     except sqlite3.Error as error:
         st.error(f"Database error: {error}")
     finally:

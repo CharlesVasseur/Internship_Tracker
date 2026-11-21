@@ -7,6 +7,7 @@ from tracker.models import APPLICATION_STAGES
 from tracker.service import add_manual_opportunity
 from tracker.queries import (
     count_by_stage,
+    get_db_path,
     get_firm,
     get_filter_options,
     list_applications,
@@ -14,10 +15,19 @@ from tracker.queries import (
     list_checks,
     list_firms,
     list_next_actions,
+    list_opportunity_deadlines,
     list_opportunities,
     list_other_offices,
     list_pipeline,
 )
+
+
+def test_get_db_path_defaults_and_honors_environment(monkeypatch):
+    monkeypatch.delenv("TRACKER_DB", raising=False)
+    assert get_db_path() == "data/tracker.db"
+
+    monkeypatch.setenv("TRACKER_DB", "data/custom.db")
+    assert get_db_path() == "data/custom.db"
 
 
 def seed_database(database_path):
@@ -700,6 +710,7 @@ def test_list_opportunities_returns_deadline_and_manual_flag(tmp_path):
             example_id,
             "Manual role",
             deadline="20261201",
+            notes="Synthetic notes",
         )
         automatic_id = connection.execute(
             """
@@ -722,7 +733,86 @@ def test_list_opportunities_returns_deadline_and_manual_flag(tmp_path):
         }
         assert rows[manual_id]["deadline"] == "2026-12-01"
         assert rows[manual_id]["is_manual"] is True
+        assert rows[manual_id]["description_text"] == "Synthetic notes"
         assert rows[automatic_id]["deadline"] == "2026-12-02"
         assert rows[automatic_id]["is_manual"] is False
+    finally:
+        connection.close()
+
+
+def test_list_opportunity_deadlines_groups_sorts_and_excludes(tmp_path):
+    connection, example_id, pension_id = seed_database(tmp_path / "tracker.db")
+    try:
+        sample_id = connection.execute(
+            "SELECT id FROM firms WHERE name = 'Sample Re'"
+        ).fetchone()["id"]
+        opportunities = [
+            (example_id, "Today", "2026-11-21", "Open"),
+            (sample_id, "Soon latest", "2026-12-05", "Upcoming"),
+            (pension_id, "Soon tie", "2026-11-21", "Needs review"),
+            (sample_id, "Outside horizon", "2026-12-06", "Open"),
+            (example_id, "Passed latest", "2026-11-20", "Open"),
+            (sample_id, "Passed older", "2026-11-15", "Needs review"),
+            (pension_id, "Closed", "2026-11-22", "Closed"),
+            (example_id, "No match", "2026-11-22", "No match"),
+            (sample_id, "Null deadline", None, "Open"),
+            (pension_id, "Tomorrow text", "tomorrow", "Open"),
+            (example_id, "Slash text", "01/12/2026", "Upcoming"),
+        ]
+        for firm_id, title, deadline, state in opportunities:
+            connection.execute(
+                """
+                INSERT INTO opportunities (
+                    firm_id, title, deadline, state, fingerprint
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    firm_id,
+                    title,
+                    deadline,
+                    state,
+                    f"fp:{title}",
+                ),
+            )
+        connection.commit()
+
+        result = list_opportunity_deadlines(
+            connection,
+            "2026-11-21",
+            horizon_days=14,
+        )
+
+        assert [row["title"] for row in result["soon"]] == [
+            "Today",
+            "Soon tie",
+            "Soon latest",
+        ]
+        assert [row["title"] for row in result["passed"]] == [
+            "Passed latest",
+            "Passed older",
+        ]
+        assert [row["title"] for row in result["unreadable"]] == [
+            "Slash text",
+            "Tomorrow text",
+        ]
+        assert all(
+            row["title"] not in {
+                "Outside horizon",
+                "Closed",
+                "No match",
+                "Null deadline",
+            }
+            for category in result.values()
+            for row in category
+        )
+    finally:
+        connection.close()
+
+
+def test_list_opportunity_deadlines_rejects_invalid_today(tmp_path):
+    connection, _, _ = seed_database(tmp_path / "tracker.db")
+    try:
+        with pytest.raises(ValueError):
+            list_opportunity_deadlines(connection, "01/12/2026")
     finally:
         connection.close()

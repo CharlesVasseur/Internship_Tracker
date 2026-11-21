@@ -10,14 +10,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tracker.importer import ImportValidationError, import_excel, print_summary
+from tracker.queries import get_db_path
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the Excel import command."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--xlsx", required=True)
-    parser.add_argument("--db", required=True)
-    parser.add_argument("--profile", required=True)
+    parser.add_argument("--db", default=get_db_path())
+    parser.add_argument("--profile", default="default")
     args = parser.parse_args(argv)
     try:
         summary = import_excel(args.xlsx, args.db, args.profile)

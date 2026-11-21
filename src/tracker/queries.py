@@ -11,7 +11,7 @@ from tracker.models import APPLICATION_STAGES, MANUAL_PREFIX
 
 def get_db_path() -> str:
     """Return the configured tracker database path."""
-    return os.environ.get("TRACKER_DB", "data/charles.db")
+    return os.environ.get("TRACKER_DB", "data/tracker.db")
 
 
 def list_firms(
@@ -288,7 +288,7 @@ def list_opportunities(
     rows = conn.execute(
         """
         SELECT id, title, location, url, deadline, state, first_seen, last_seen,
-               missing_count, is_internship, fingerprint
+               missing_count, is_internship, fingerprint, description_text
         FROM opportunities
         WHERE firm_id = ?
         ORDER BY
@@ -307,6 +307,84 @@ def list_opportunities(
         )
         opportunities.append(opportunity)
     return opportunities
+
+
+def list_opportunity_deadlines(
+    conn: sqlite3.Connection,
+    today: str,
+    horizon_days: int = 14,
+) -> dict:
+    """Return active opportunity deadlines grouped by soon, passed, or unreadable."""
+    try:
+        today_date = date.fromisoformat(today)
+    except (TypeError, ValueError) as error:
+        raise ValueError("today must be a valid ISO date") from error
+    horizon_date = today_date + timedelta(days=horizon_days)
+
+    rows = conn.execute(
+        """
+        SELECT
+            o.id AS opportunity_id,
+            f.id AS firm_id,
+            f.name AS firm_name,
+            f.country,
+            f.city,
+            o.title,
+            o.url,
+            o.deadline,
+            o.state,
+            o.fingerprint
+        FROM opportunities AS o
+        JOIN firms AS f ON f.id = o.firm_id
+        WHERE o.state IN ('Open', 'Upcoming', 'Needs review')
+        """
+    ).fetchall()
+
+    soon: list[dict] = []
+    passed: list[dict] = []
+    unreadable: list[dict] = []
+
+    for row in rows:
+        item = dict(row)
+        fingerprint = item.pop("fingerprint")
+        item["is_manual"] = (
+            isinstance(fingerprint, str)
+            and fingerprint.startswith(MANUAL_PREFIX)
+        )
+        value = item["deadline"]
+        if value is None:
+            continue
+
+        try:
+            deadline_date = date.fromisoformat(value)
+        except (TypeError, ValueError):
+            unreadable.append(item)
+            continue
+
+        if deadline_date < today_date:
+            passed.append(item)
+        elif today_date <= deadline_date <= horizon_date:
+            soon.append(item)
+
+    soon.sort(
+        key=lambda item: (
+            date.fromisoformat(item["deadline"]),
+            item["firm_name"],
+        )
+    )
+    passed.sort(
+        key=lambda item: (
+            -date.fromisoformat(item["deadline"]).toordinal(),
+            item["firm_name"],
+        )
+    )
+    unreadable.sort(key=lambda item: item["firm_name"])
+
+    return {
+        "soon": soon,
+        "passed": passed,
+        "unreadable": unreadable,
+    }
 
 
 def list_checks(

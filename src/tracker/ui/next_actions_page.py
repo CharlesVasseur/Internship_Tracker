@@ -7,7 +7,11 @@ import sqlite3
 import streamlit as st
 
 from tracker.db import connect, init_db
-from tracker.queries import get_db_path, list_next_actions
+from tracker.queries import (
+    get_db_path,
+    list_next_actions,
+    list_opportunity_deadlines,
+)
 
 
 def _next_action_rows(items: list[dict], include_days_late: bool = False, today: date | None = None) -> list[dict]:
@@ -29,6 +33,30 @@ def _next_action_rows(items: list[dict], include_days_late: bool = False, today:
     return rows
 
 
+def _opportunity_deadline_rows(
+    items: list[dict],
+    include_days_late: bool = False,
+    today: date | None = None,
+) -> list[dict]:
+    """Convert opportunity deadlines into the dataframe shape used by the page."""
+    rows = []
+    for item in items:
+        row = {
+            "Firm": item["firm_name"],
+            "Country": item["country"],
+            "City": item["city"],
+            "Title": item["title"],
+            "Deadline": item["deadline"],
+            "State": item["state"],
+            "Link": item["url"],
+        }
+        if include_days_late:
+            deadline = date.fromisoformat(item["deadline"])
+            row["Days late"] = (today - deadline).days
+        rows.append(row)
+    return rows
+
+
 def render_next_actions_page() -> None:
     """Render next actions grouped by due state."""
     db_path = get_db_path()
@@ -36,7 +64,7 @@ def render_next_actions_page() -> None:
         st.error(
             f"Database not found: {db_path}\n\n"
             "Import the workbook with:\n"
-            f"python scripts/import_excel.py --xlsx <xlsx> --db {db_path} --profile charles"
+            f"python scripts/import_excel.py --xlsx <xlsx> --db <db_path>"
         )
         st.stop()
 
@@ -51,12 +79,20 @@ def render_next_actions_page() -> None:
         connection = connect(db_path)
         today = date.today()
         actions = list_next_actions(connection, today.isoformat())
+        opportunities = list_opportunity_deadlines(
+            connection,
+            today.isoformat(),
+        )
 
-        metric_columns = st.columns(4)
+        metric_columns = st.columns(5)
         metric_columns[0].metric("Overdue", len(actions["overdue"]))
         metric_columns[1].metric("Today", len(actions["today"]))
         metric_columns[2].metric("Next 7 days", len(actions["upcoming"]))
         metric_columns[3].metric("No date", len(actions["no_date"]))
+        metric_columns[4].metric(
+            "Deadlines (14 days)",
+            len(opportunities["soon"]),
+        )
 
         sections = (
             ("Overdue", "overdue", True),
@@ -87,7 +123,86 @@ def render_next_actions_page() -> None:
                 hide_index=True,
             )
 
-        if all(not items for items in actions.values()):
+        st.subheader("Opportunity deadlines")
+        if opportunities["soon"]:
+            st.dataframe(
+                _opportunity_deadline_rows(opportunities["soon"]),
+                hide_index=True,
+                column_order=[
+                    "Firm",
+                    "Country",
+                    "City",
+                    "Title",
+                    "Deadline",
+                    "State",
+                    "Link",
+                ],
+                column_config={
+                    "Link": st.column_config.LinkColumn(
+                        "Link",
+                        display_text="Open",
+                    ),
+                },
+            )
+        else:
+            st.caption("Nothing here.")
+
+        st.subheader("Deadline passed (still open)")
+        if opportunities["passed"]:
+            st.dataframe(
+                _opportunity_deadline_rows(
+                    opportunities["passed"],
+                    include_days_late=True,
+                    today=today,
+                ),
+                hide_index=True,
+                column_order=[
+                    "Firm",
+                    "Country",
+                    "City",
+                    "Title",
+                    "Deadline",
+                    "State",
+                    "Link",
+                    "Days late",
+                ],
+                column_config={
+                    "Link": st.column_config.LinkColumn(
+                        "Link",
+                        display_text="Open",
+                    ),
+                },
+            )
+        else:
+            st.caption("Nothing here.")
+
+        if opportunities["unreadable"]:
+            st.warning("Some opportunity deadlines are not valid dates.")
+            st.subheader("Unreadable opportunity deadlines")
+            st.dataframe(
+                _opportunity_deadline_rows(opportunities["unreadable"]),
+                hide_index=True,
+                column_order=[
+                    "Firm",
+                    "Country",
+                    "City",
+                    "Title",
+                    "Deadline",
+                    "State",
+                    "Link",
+                ],
+                column_config={
+                    "Link": st.column_config.LinkColumn(
+                        "Link",
+                        display_text="Open",
+                    ),
+                },
+            )
+
+        if (
+            all(not items for items in actions.values())
+            and all(not items for items in opportunities.values())
+        ):
             st.info("No next actions planned.")
     except sqlite3.Error as error:
         st.error(f"Database error: {error}")

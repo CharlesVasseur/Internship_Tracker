@@ -39,6 +39,8 @@ The unique key is `(profile, name, country, city)`. The `profile, employer_key` 
 - `careers_page`: a link to an employer careers or jobs page.
 - `NULL`: no source classification is stored yet.
 
+An existing database keeps the profile value it was imported with.
+
 ## opportunities
 
 Stores a job opening associated with a firm.

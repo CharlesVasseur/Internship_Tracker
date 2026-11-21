@@ -15,14 +15,14 @@ $env:PYTHONPATH="src"
 python -m streamlit run src/tracker/ui/app.py
 ```
 
-The database is `data/charles.db` unless the `TRACKER_DB` environment variable points elsewhere. Press `Ctrl+C` in the PowerShell window to stop the server. Streamlit is installed with `pip install streamlit`; it is also available through the optional `ui` dependency group in `pyproject.toml`.
+The database is `data/tracker.db` unless the `TRACKER_DB` environment variable points elsewhere. Press `Ctrl+C` in the PowerShell window to stop the server. Streamlit is installed with `pip install streamlit`; it is also available through the optional `ui` dependency group in `pyproject.toml`.
 
 ## Try changes on a copy
 
-Copy `data\charles.db` to `data\charles_test.db`, then point the app at the copy:
+Copy `data\tracker.db` to `data\tracker_test.db`, then point the app at the copy:
 
 ```powershell
-$env:TRACKER_DB="data\charles_test.db"
+$env:TRACKER_DB="data\tracker_test.db"
 ```
 
 ## Pages
@@ -93,8 +93,10 @@ scripts/source_survey.py   the first survey script, kept unchanged for compariso
 Keep the workbook and SQLite database inside `data/`; both `*.xlsx` and `data/` are git-ignored.
 
 ```powershell
-python scripts/import_excel.py --xlsx data/Actuarial_Internship_Tracker.xlsx --db data/charles.db --profile charles
+python scripts/import_excel.py --xlsx data/Actuarial_Internship_Tracker.xlsx --db data/tracker.db --profile default
 ```
+
+An existing database keeps the profile value it was imported with.
 
 The workbook must contain a sheet named `Tracker`. The header row must include `Company`, `Country`, `City`, `Category`, `Actuarial depth`, `Role types`, `Internship type`, `Eligibility`, `Priority`, `Language fit`, `Opening window`, `Application link / contact`, `Work authorisation (CH only)`, `Notes`, `Last verified`, `Status`, and `Next action date`.
 

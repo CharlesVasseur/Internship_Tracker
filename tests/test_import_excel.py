@@ -177,6 +177,20 @@ def test_imports_firms_applications_and_is_idempotent(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM point_events").fetchone()[0] == 0
 
 
+def test_import_without_profile_uses_default(tmp_path):
+    workbook_path = tmp_path / "tracker.xlsx"
+    database_path = tmp_path / "tracker.db"
+    build_workbook(workbook_path)
+
+    assert main(["--xlsx", str(workbook_path), "--db", str(database_path)]) == 0
+
+    with connect(database_path) as connection:
+        profile = connection.execute(
+            "SELECT profile FROM firms ORDER BY id LIMIT 1"
+        ).fetchone()["profile"]
+    assert profile == "default"
+
+
 def test_missing_header_returns_two_and_writes_nothing(tmp_path, capsys):
     workbook_path = tmp_path / "tracker.xlsx"
     database_path = tmp_path / "tracker.db"

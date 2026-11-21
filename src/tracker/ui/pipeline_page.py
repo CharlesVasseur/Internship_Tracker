@@ -21,7 +21,7 @@ def render_pipeline_page() -> None:
         st.error(
             f"Database not found: {db_path}\n\n"
             "Import the workbook with:\n"
-            f"python scripts/import_excel.py --xlsx <xlsx> --db {db_path} --profile charles"
+            f"python scripts/import_excel.py --xlsx <xlsx> --db <db_path>"
         )
         st.stop()
 
