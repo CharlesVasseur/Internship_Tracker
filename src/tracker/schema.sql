@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     eligibility_flags TEXT,
     fingerprint TEXT,
     evidence TEXT,
+    deadline TEXT,
     FOREIGN KEY (firm_id) REFERENCES firms(id)
 );
 

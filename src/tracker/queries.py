@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import os
 import sqlite3
 
-from tracker.models import APPLICATION_STAGES
+from tracker.models import APPLICATION_STAGES, MANUAL_PREFIX
 
 
 def get_db_path() -> str:
@@ -287,8 +287,8 @@ def list_opportunities(
     """Return opportunities for a firm with recent observations first."""
     rows = conn.execute(
         """
-        SELECT id, title, location, url, state, first_seen, last_seen,
-               missing_count, is_internship
+        SELECT id, title, location, url, deadline, state, first_seen, last_seen,
+               missing_count, is_internship, fingerprint
         FROM opportunities
         WHERE firm_id = ?
         ORDER BY
@@ -297,7 +297,16 @@ def list_opportunities(
         """,
         (firm_id,),
     ).fetchall()
-    return [dict(row) for row in rows]
+    opportunities = []
+    for row in rows:
+        opportunity = dict(row)
+        fingerprint = opportunity.pop("fingerprint")
+        opportunity["is_manual"] = (
+            isinstance(fingerprint, str)
+            and fingerprint.startswith(MANUAL_PREFIX)
+        )
+        opportunities.append(opportunity)
+    return opportunities
 
 
 def list_checks(

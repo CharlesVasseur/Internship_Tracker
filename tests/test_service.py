@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+from tracker.adapters.base import AdapterResult, Listing
+from tracker.checks import apply_check_result
 from tracker.db import connect, init_db
 from tracker.models import (
     ACTIVITY_CREATED,
@@ -11,12 +13,16 @@ from tracker.models import (
     ACTIVITY_STAGE_CHANGE,
 )
 from tracker.service import (
+    add_manual_opportunity,
     add_application,
     add_note,
+    delete_manual_opportunity,
     MANUAL_CHECK_EVIDENCE,
     record_manual_check,
     save_application,
+    set_application_opportunity,
     update_firm_link,
+    update_manual_opportunity,
 )
 
 
@@ -857,5 +863,320 @@ def test_link_update_does_not_change_last_verified(tmp_path):
             (firm_a,),
         ).fetchone()["last_verified"]
         assert last_verified == "2026-11-01"
+    finally:
+        connection.close()
+
+
+def test_add_manual_opportunity_stores_fields_and_unique_fingerprints(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        first_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "  Risk Intern  ",
+            url="https://example.test/role",
+            location="  Paris  ",
+            deadline="20261201",
+            notes="  Synthetic note  ",
+            state="Open",
+            on_date="20261120",
+        )
+        second_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "Risk Intern",
+            url="https://example.test/role",
+            location="Paris",
+            deadline="2026-12-01",
+            notes="Synthetic note",
+            state="Open",
+            on_date="2026-11-20",
+        )
+        rows = connection.execute(
+            "SELECT * FROM opportunities "
+            "WHERE id IN (?, ?) ORDER BY id",
+            (first_id, second_id),
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0]["title"] == "Risk Intern"
+        assert rows[0]["location"] == "Paris"
+        assert rows[0]["url"] == "https://example.test/role"
+        assert rows[0]["deadline"] == "2026-12-01"
+        assert rows[0]["description_text"] == "Synthetic note"
+        assert rows[0]["state"] == "Open"
+        assert rows[0]["first_seen"] == "2026-11-20"
+        assert rows[0]["last_seen"] == "2026-11-20"
+        assert rows[0]["missing_count"] == 0
+        assert rows[0]["fingerprint"].startswith("manual:")
+        assert rows[1]["fingerprint"].startswith("manual:")
+        assert rows[0]["fingerprint"] != rows[1]["fingerprint"]
+        assert rows[0]["evidence"] == "manual: added by user"
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("title", "url", "deadline", "state"),
+    [
+        ("", "https://example.test/role", None, "Open"),
+        ("x" * 301, "https://example.test/role", None, "Open"),
+        ("Role", "javascript:alert(1)", None, "Open"),
+        ("Role", "example.test/x", None, "Open"),
+        ("Role", "https:///x", None, "Open"),
+        ("Role", None, "tomorrow", "Open"),
+        ("Role", None, "2026-13-45", "Open"),
+        ("Role", None, None, "Weird"),
+    ],
+)
+def test_add_manual_opportunity_invalid_values_write_nothing(
+    tmp_path,
+    title,
+    url,
+    deadline,
+    state,
+):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        before = connection.execute(
+            "SELECT COUNT(*) FROM opportunities"
+        ).fetchone()[0]
+        with pytest.raises(ValueError):
+            add_manual_opportunity(
+                connection,
+                firm_a,
+                title,
+                url=url,
+                deadline=deadline,
+                state=state,
+            )
+        after = connection.execute(
+            "SELECT COUNT(*) FROM opportunities"
+        ).fetchone()[0]
+        assert after == before
+    finally:
+        connection.close()
+
+
+def test_add_manual_opportunity_empty_optional_fields_and_unknown_firm(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        opportunity_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "Role",
+            url=" ",
+            location=" ",
+            deadline=" ",
+            notes=" ",
+        )
+        row = connection.execute(
+            "SELECT url, location, deadline, description_text "
+            "FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        assert row["url"] is None
+        assert row["location"] is None
+        assert row["deadline"] is None
+        assert row["description_text"] is None
+
+        before = connection.execute(
+            "SELECT COUNT(*) FROM opportunities"
+        ).fetchone()[0]
+        with pytest.raises(LookupError):
+            add_manual_opportunity(connection, -1, "Unknown")
+        after = connection.execute(
+            "SELECT COUNT(*) FROM opportunities"
+        ).fetchone()[0]
+        assert after == before
+    finally:
+        connection.close()
+
+
+def test_update_manual_opportunity_changes_fields(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        opportunity_id = add_manual_opportunity(
+            connection,
+            firm_a,
+            "Old title",
+            state="Open",
+        )
+        update_manual_opportunity(
+            connection,
+            opportunity_id,
+            title=" New title ",
+            url="https://example.test/new",
+            location="Zurich",
+            deadline="20261201",
+            notes="Updated",
+            state="Upcoming",
+        )
+        row = connection.execute(
+            "SELECT title, url, location, deadline, description_text, state "
+            "FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        assert row["title"] == "New title"
+        assert row["url"] == "https://example.test/new"
+        assert row["location"] == "Zurich"
+        assert row["deadline"] == "2026-12-01"
+        assert row["description_text"] == "Updated"
+        assert row["state"] == "Upcoming"
+
+        with pytest.raises(LookupError):
+            update_manual_opportunity(
+                connection,
+                -1,
+                title="Missing",
+                url=None,
+                location=None,
+                deadline=None,
+                notes=None,
+                state="Open",
+            )
+    finally:
+        connection.close()
+
+
+def test_update_manual_opportunity_refuses_automatic_row(tmp_path):
+    connection, firm_a, _, _, _ = seed_database(tmp_path)
+    try:
+        apply_check_result(
+            connection,
+            firm_a,
+            AdapterResult(
+                "ok",
+                (Listing(
+                    source_job_id="job-1",
+                    title="Automatic role",
+                    location_raw="Zurich",
+                    url="https://example.test/job-1",
+                    posted_date=None,
+                    description="Synthetic",
+                    language="en",
+                ),),
+                ("Synthetic evidence",),
+                None,
+                200,
+            ),
+            started_at="2026-11-20T10:00:00",
+            finished_at="2026-11-20T10:01:00",
+        )
+        opportunity = connection.execute(
+            "SELECT id, title FROM opportunities WHERE firm_id = ?",
+            (firm_a,),
+        ).fetchone()
+        before = tuple(opportunity)
+        with pytest.raises(
+            ValueError,
+            match="only manual opportunities can be edited",
+        ):
+            update_manual_opportunity(
+                connection,
+                opportunity["id"],
+                title="Changed",
+                url=None,
+                location=None,
+                deadline=None,
+                notes=None,
+                state="Open",
+            )
+        after = connection.execute(
+            "SELECT id, title FROM opportunities WHERE id = ?",
+            (opportunity["id"],),
+        ).fetchone()
+        assert tuple(after) == before
+    finally:
+        connection.close()
+
+
+def test_delete_manual_opportunity_and_application_link_rules(tmp_path):
+    connection, firm_a, firm_b, application_a, application_b = seed_database(tmp_path)
+    try:
+        manual_id = add_manual_opportunity(connection, firm_a, "Manual role")
+        delete_manual_opportunity(connection, manual_id)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM opportunities WHERE id = ?",
+            (manual_id,),
+        ).fetchone()[0] == 0
+
+        linked_manual_id = add_manual_opportunity(connection, firm_a, "Linked role")
+        set_application_opportunity(connection, application_a, linked_manual_id)
+        before = connection.execute(
+            "SELECT COUNT(*) FROM applications WHERE opportunity_id = ?",
+            (linked_manual_id,),
+        ).fetchone()[0]
+        with pytest.raises(ValueError):
+            delete_manual_opportunity(connection, linked_manual_id)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM opportunities WHERE id = ?",
+            (linked_manual_id,),
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM applications WHERE opportunity_id = ?",
+            (linked_manual_id,),
+        ).fetchone()[0] == before
+
+        automatic_id = connection.execute(
+            "INSERT INTO opportunities (firm_id, fingerprint, title) "
+            "VALUES (?, ?, ?)",
+            (firm_a, "fp:auto", "Automatic role"),
+        ).lastrowid
+        with pytest.raises(ValueError):
+            delete_manual_opportunity(connection, automatic_id)
+
+        set_application_opportunity(connection, application_a, None)
+        assert connection.execute(
+            "SELECT opportunity_id FROM applications WHERE id = ?",
+            (application_a,),
+        ).fetchone()["opportunity_id"] is None
+
+        other_manual_id = add_manual_opportunity(connection, firm_b, "Other firm role")
+        with pytest.raises(ValueError):
+            set_application_opportunity(connection, application_a, other_manual_id)
+    finally:
+        connection.close()
+
+
+def test_set_application_opportunity_same_firm_clear_and_errors(tmp_path):
+    connection, firm_a, firm_b, application_a, _ = seed_database(tmp_path)
+    try:
+        same_id = add_manual_opportunity(connection, firm_a, "Same firm")
+        set_application_opportunity(connection, application_a, same_id)
+        assert connection.execute(
+            "SELECT opportunity_id FROM applications WHERE id = ?",
+            (application_a,),
+        ).fetchone()["opportunity_id"] == same_id
+
+        set_application_opportunity(connection, application_a, None)
+        assert connection.execute(
+            "SELECT opportunity_id FROM applications WHERE id = ?",
+            (application_a,),
+        ).fetchone()["opportunity_id"] is None
+
+        other_id = add_manual_opportunity(connection, firm_b, "Other firm")
+        before = connection.execute(
+            "SELECT opportunity_id FROM applications WHERE id = ?",
+            (application_a,),
+        ).fetchone()["opportunity_id"]
+        with pytest.raises(ValueError):
+            set_application_opportunity(connection, application_a, other_id)
+        assert connection.execute(
+            "SELECT opportunity_id FROM applications WHERE id = ?",
+            (application_a,),
+        ).fetchone()["opportunity_id"] == before
+
+        with pytest.raises(LookupError):
+            set_application_opportunity(connection, -1, same_id)
+        with pytest.raises(LookupError):
+            set_application_opportunity(connection, application_a, -1)
+
+        before_activity_count = connection.execute(
+            "SELECT COUNT(*) FROM activities"
+        ).fetchone()[0]
+        set_application_opportunity(connection, application_a, same_id)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM activities"
+        ).fetchone()[0] == before_activity_count
     finally:
         connection.close()

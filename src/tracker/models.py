@@ -19,6 +19,8 @@ OPPORTUNITY_STATES = (
     "Needs review",
 )
 
+MANUAL_PREFIX = "manual:"
+
 ACTIVITY_CREATED = "application_created"
 ACTIVITY_STAGE_CHANGE = "stage_change"
 ACTIVITY_NOTE = "note"

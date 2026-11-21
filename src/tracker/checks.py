@@ -149,6 +149,7 @@ def apply_check_result(
                    missing_count, state
             FROM opportunities
             WHERE firm_id = ?
+              AND (fingerprint IS NULL OR fingerprint NOT LIKE 'manual:%')
             """,
             (firm_id,),
         ).fetchall()

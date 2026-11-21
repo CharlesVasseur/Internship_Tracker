@@ -7,6 +7,7 @@ import pytest
 from tracker.adapters.base import AdapterResult, Listing
 from tracker.checks import apply_check_result, make_identity
 from tracker.db import connect, init_db
+from tracker.service import add_manual_opportunity
 
 
 STARTED = "2026-11-20T10:00:00"
@@ -397,5 +398,92 @@ def test_checks_insert_failure_rolls_back_all_updates(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM checks").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM opportunities WHERE firm_id = ?", (firm_id,)).fetchone()[0] == 0
         assert tuple(after_firm) == tuple(before_firm)
+    finally:
+        connection.close()
+
+
+def test_manual_opportunity_is_untouched_by_all_check_results(tmp_path):
+    connection, firm_id, _ = seed_database(tmp_path)
+    try:
+        manual_id = add_manual_opportunity(
+            connection,
+            firm_id,
+            "Manual role",
+            url="https://example.test/manual",
+            location="Zurich",
+            deadline="2026-12-01",
+            notes="Manual note",
+            state="Open",
+            on_date="2026-11-20",
+        )
+        apply_check_result(
+            connection,
+            firm_id,
+            ok_result(listing()),
+            started_at=STARTED,
+            finished_at=FINISHED_1,
+        )
+        manual_before = connection.execute(
+            "SELECT state, missing_count, last_seen, title, url "
+            "FROM opportunities WHERE id = ?",
+            (manual_id,),
+        ).fetchone()
+
+        apply_check_result(
+            connection,
+            firm_id,
+            ok_result(listing()),
+            started_at=STARTED,
+            finished_at=FINISHED_2,
+        )
+        manual_ok = connection.execute(
+            "SELECT state, missing_count, last_seen, title, url "
+            "FROM opportunities WHERE id = ?",
+            (manual_id,),
+        ).fetchone()
+        assert tuple(manual_ok) == tuple(manual_before)
+
+        for finished_at in (
+            FINISHED_3,
+            "2026-11-20T10:04:00",
+            "2026-11-20T10:05:00",
+        ):
+            apply_check_result(
+                connection,
+                firm_id,
+                AdapterResult("empty"),
+                started_at=STARTED,
+                finished_at=finished_at,
+            )
+        manual_after_empty = connection.execute(
+            "SELECT state, missing_count, last_seen, title, url "
+            "FROM opportunities WHERE id = ?",
+            (manual_id,),
+        ).fetchone()
+        assert tuple(manual_after_empty) == tuple(manual_before)
+
+        automatic = connection.execute(
+            "SELECT id, state, missing_count "
+            "FROM opportunities "
+            "WHERE firm_id = ? AND fingerprint NOT LIKE 'manual:%'",
+            (firm_id,),
+        ).fetchone()
+        assert automatic["missing_count"] == 3
+        assert automatic["state"] == "Closed"
+
+        for status in ("failed", "blocked"):
+            apply_check_result(
+                connection,
+                firm_id,
+                AdapterResult(status, (), (), "source unavailable", 403),
+                started_at=STARTED,
+                finished_at="2026-11-20T10:06:00",
+            )
+            manual_after_status = connection.execute(
+                "SELECT state, missing_count, last_seen, title, url "
+                "FROM opportunities WHERE id = ?",
+                (manual_id,),
+            ).fetchone()
+            assert tuple(manual_after_status) == tuple(manual_before)
     finally:
         connection.close()

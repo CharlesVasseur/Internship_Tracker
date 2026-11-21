@@ -6,7 +6,7 @@ import sqlite3
 
 import streamlit as st
 
-from tracker.db import connect
+from tracker.db import connect, init_db
 from tracker.queries import get_db_path, list_next_actions
 
 
@@ -38,6 +38,12 @@ def render_next_actions_page() -> None:
             "Import the workbook with:\n"
             f"python scripts/import_excel.py --xlsx <xlsx> --db {db_path} --profile charles"
         )
+        st.stop()
+
+    try:
+        init_db(db_path)
+    except (sqlite3.Error, RuntimeError) as error:
+        st.error(f"Database problem: {error}")
         st.stop()
 
     connection = None

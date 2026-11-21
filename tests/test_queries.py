@@ -4,6 +4,7 @@ import pytest
 
 from tracker.db import connect, init_db
 from tracker.models import APPLICATION_STAGES
+from tracker.service import add_manual_opportunity
 from tracker.queries import (
     count_by_stage,
     get_firm,
@@ -687,5 +688,41 @@ def test_list_next_actions_rejects_invalid_today(tmp_path):
     try:
         with pytest.raises(ValueError):
             list_next_actions(connection, "01/12/2026")
+    finally:
+        connection.close()
+
+
+def test_list_opportunities_returns_deadline_and_manual_flag(tmp_path):
+    connection, example_id, _ = seed_database(tmp_path / "tracker.db")
+    try:
+        manual_id = add_manual_opportunity(
+            connection,
+            example_id,
+            "Manual role",
+            deadline="20261201",
+        )
+        automatic_id = connection.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, title, fingerprint, deadline
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                example_id,
+                "Automatic role",
+                "fp:auto",
+                "2026-12-02",
+            ),
+        ).lastrowid
+        connection.commit()
+
+        rows = {
+            row["id"]: row
+            for row in list_opportunities(connection, example_id)
+        }
+        assert rows[manual_id]["deadline"] == "2026-12-01"
+        assert rows[manual_id]["is_manual"] is True
+        assert rows[automatic_id]["deadline"] == "2026-12-02"
+        assert rows[automatic_id]["is_manual"] is False
     finally:
         connection.close()

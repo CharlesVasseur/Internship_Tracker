@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 import sqlite3
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 from tracker.models import (
@@ -9,6 +10,8 @@ from tracker.models import (
     ACTIVITY_NOTE,
     ACTIVITY_STAGE_CHANGE,
     APPLICATION_STAGES,
+    MANUAL_PREFIX,
+    OPPORTUNITY_STATES,
 )
 
 MANUAL_CHECK_EVIDENCE = "manual: checked by user"
@@ -35,6 +38,31 @@ def _parse_date(value: str | date | None, field_name: str = "date") -> str | Non
         return date.fromisoformat(text).isoformat()
     except ValueError as error:
         raise ValueError(f"{field_name} must be YYYY-MM-DD") from error
+
+
+def _validate_url(url: str | None) -> str | None:
+    """Validate an optional HTTP or HTTPS URL and return its trimmed value."""
+    if url is None:
+        return None
+    if not isinstance(url, str):
+        raise ValueError("URL must be a non-empty HTTP or HTTPS URL")
+    clean_url = url.strip()
+    if not clean_url:
+        return None
+    if len(clean_url) > 2000:
+        raise ValueError("URL must be at most 2000 characters")
+    if any(character.isspace() for character in clean_url):
+        raise ValueError("URL must not contain whitespace")
+
+    lower_url = clean_url.lower()
+    if not (lower_url.startswith("http://") or lower_url.startswith("https://")):
+        raise ValueError("URL must start with http:// or https://")
+    scheme_end = clean_url.find("://") + 3
+    if not clean_url[scheme_end:].strip():
+        raise ValueError("URL must contain something after the scheme")
+    if not urlsplit(clean_url).netloc:
+        raise ValueError("URL must contain a host")
+    return clean_url
 
 
 def add_application(
@@ -213,24 +241,11 @@ def update_firm_link(
     apply_to_other_offices: bool = False,
 ) -> dict:
     """Save a real firm link without fetching or opening the URL."""
-    if not isinstance(url, str):
-        raise ValueError("URL must be a non-empty HTTP or HTTPS URL")
-    clean_url = url.strip()
-    if not clean_url:
+    if isinstance(url, str) and not url.strip():
         raise ValueError("URL must not be empty")
-    if len(clean_url) > 2000:
-        raise ValueError("URL must be at most 2000 characters")
-    if any(character.isspace() for character in clean_url):
-        raise ValueError("URL must not contain whitespace")
-
-    lower_url = clean_url.lower()
-    if not (lower_url.startswith("http://") or lower_url.startswith("https://")):
-        raise ValueError("URL must start with http:// or https://")
-    scheme_end = clean_url.find("://") + 3
-    if not clean_url[scheme_end:].strip():
-        raise ValueError("URL must contain something after the scheme")
-    if not urlsplit(clean_url).netloc:
-        raise ValueError("URL must contain a host")
+    clean_url = _validate_url(url)
+    if clean_url is None:
+        raise ValueError("URL must not be empty")
     if link_type not in ("direct_posting", "careers_page"):
         raise ValueError(
             "link_type must be direct_posting or careers_page"
@@ -277,6 +292,201 @@ def update_firm_link(
                 updated += cursor.rowcount
 
     return {"updated": updated}
+
+
+def add_manual_opportunity(
+    conn: sqlite3.Connection,
+    firm_id: int,
+    title: str,
+    url: str | None = None,
+    location: str | None = None,
+    deadline: str | date | None = None,
+    notes: str | None = None,
+    state: str = "Open",
+    on_date: str | date | None = None,
+) -> int:
+    """Add a user-created opportunity without making it check-managed."""
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title must not be empty")
+    title_value = title.strip()
+    if len(title_value) > 300:
+        raise ValueError("title must be at most 300 characters")
+    if state not in OPPORTUNITY_STATES:
+        raise ValueError(f"invalid opportunity state: {state}")
+
+    url_value = _validate_url(url)
+    location_value = _nullable_text(location)
+    notes_value = _nullable_text(notes)
+    deadline_value = _parse_date(deadline, "deadline")
+    on_date_value = _parse_date(on_date, "on_date")
+    if on_date_value is None:
+        on_date_value = date.today().isoformat()
+
+    with conn:
+        firm = conn.execute(
+            "SELECT id FROM firms WHERE id = ?",
+            (firm_id,),
+        ).fetchone()
+        if firm is None:
+            raise LookupError(f"unknown firm id: {firm_id}")
+
+        cursor = conn.execute(
+            """
+            INSERT INTO opportunities (
+                firm_id, source_job_id, title, location, url,
+                description_text, first_seen, last_seen, missing_count,
+                state, fingerprint, evidence, deadline
+            ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+            """,
+            (
+                firm_id,
+                title_value,
+                location_value,
+                url_value,
+                notes_value,
+                on_date_value,
+                on_date_value,
+                state,
+                MANUAL_PREFIX + uuid4().hex,
+                "manual: added by user",
+                deadline_value,
+            ),
+        )
+        return cursor.lastrowid
+
+
+def update_manual_opportunity(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    *,
+    title: str,
+    url: str | None,
+    location: str | None,
+    deadline: str | date | None,
+    notes: str | None,
+    state: str,
+) -> None:
+    """Update only an opportunity created manually."""
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title must not be empty")
+    title_value = title.strip()
+    if len(title_value) > 300:
+        raise ValueError("title must be at most 300 characters")
+    if state not in OPPORTUNITY_STATES:
+        raise ValueError(f"invalid opportunity state: {state}")
+
+    url_value = _validate_url(url)
+    location_value = _nullable_text(location)
+    notes_value = _nullable_text(notes)
+    deadline_value = _parse_date(deadline, "deadline")
+
+    with conn:
+        opportunity = conn.execute(
+            "SELECT id, fingerprint FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if opportunity is None:
+            raise LookupError(f"unknown opportunity id: {opportunity_id}")
+        fingerprint = opportunity["fingerprint"]
+        if not (
+            isinstance(fingerprint, str)
+            and fingerprint.startswith(MANUAL_PREFIX)
+        ):
+            raise ValueError("only manual opportunities can be edited")
+
+        conn.execute(
+            """
+            UPDATE opportunities
+            SET title = ?, location = ?, url = ?, deadline = ?,
+                description_text = ?, state = ?
+            WHERE id = ?
+            """,
+            (
+                title_value,
+                location_value,
+                url_value,
+                deadline_value,
+                notes_value,
+                state,
+                opportunity_id,
+            ),
+        )
+
+
+def delete_manual_opportunity(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+) -> None:
+    """Delete a manual opportunity if no application references it."""
+    with conn:
+        opportunity = conn.execute(
+            "SELECT id, fingerprint FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if opportunity is None:
+            raise LookupError(f"unknown opportunity id: {opportunity_id}")
+        fingerprint = opportunity["fingerprint"]
+        if not (
+            isinstance(fingerprint, str)
+            and fingerprint.startswith(MANUAL_PREFIX)
+        ):
+            raise ValueError("only manual opportunities can be deleted")
+
+        application_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM applications "
+            "WHERE opportunity_id = ?",
+            (opportunity_id,),
+        ).fetchone()["count"]
+        if application_count:
+            raise ValueError(
+                f"{application_count} application"
+                f"{'s' if application_count != 1 else ''} reference"
+                f"{'s' if application_count == 1 else ''} "
+                "this manual opportunity"
+            )
+
+        conn.execute(
+            "DELETE FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        )
+
+
+def set_application_opportunity(
+    conn: sqlite3.Connection,
+    application_id: int,
+    opportunity_id: int | None,
+) -> None:
+    """Link or clear an application-opportunity relationship."""
+    with conn:
+        application = conn.execute(
+            "SELECT id, firm_id FROM applications WHERE id = ?",
+            (application_id,),
+        ).fetchone()
+        if application is None:
+            raise LookupError(f"unknown application id: {application_id}")
+
+        if opportunity_id is None:
+            conn.execute(
+                "UPDATE applications SET opportunity_id = NULL WHERE id = ?",
+                (application_id,),
+            )
+            return
+
+        opportunity = conn.execute(
+            "SELECT id, firm_id FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if opportunity is None:
+            raise LookupError(f"unknown opportunity id: {opportunity_id}")
+        if opportunity["firm_id"] != application["firm_id"]:
+            raise ValueError(
+                "opportunity belongs to a different firm"
+            )
+
+        conn.execute(
+            "UPDATE applications SET opportunity_id = ? WHERE id = ?",
+            (opportunity_id, application_id),
+        )
 
 
 def record_manual_check(
