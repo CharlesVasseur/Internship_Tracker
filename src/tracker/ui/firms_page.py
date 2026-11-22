@@ -3,12 +3,19 @@
 from pathlib import Path
 from datetime import date, datetime
 import hashlib
+import os
 import sqlite3
 
 import streamlit as st
 
 from tracker.db import connect, init_db
+from tracker.adapters.paged_cards import ADAPTER_NAME
 from tracker.models import APPLICATION_STAGES, OPPORTUNITY_STATES
+from tracker.monitor import (
+    MIN_MINUTES_BETWEEN_CHECKS,
+    load_monitoring_config,
+    run_check,
+)
 from tracker.queries import (
     get_db_path,
     get_firm,
@@ -30,6 +37,8 @@ from tracker.service import (
     set_opportunity_state,
     update_manual_opportunity,
     record_manual_check,
+    set_firm_monitoring,
+    disable_firm_monitoring,
     update_firm_link,
 )
 
@@ -471,6 +480,16 @@ def render_firms_page() -> None:
                     st.rerun()
 
             st.subheader("Monitoring")
+            firm_id = selected_firm["firm_id"]
+            check_msg_key = f"check_msg_{firm_id}"
+            check_message = st.session_state.pop(check_msg_key, None)
+            if check_message is not None:
+                kind, text = check_message
+                if kind == "success":
+                    st.success(text)
+                else:
+                    st.error(text)
+
             last_successful_check = detail["last_successful_check"]
             last_check_status = detail["last_check_status"] or "-"
             st.write(
@@ -479,7 +498,7 @@ def render_firms_page() -> None:
                 f"(status: {last_check_status})"
             )
             with st.form(
-                key=f"manual_check_{selected_firm['firm_id']}",
+                key=f"manual_check_{firm_id}",
                 clear_on_submit=False,
                 border=True,
             ):
@@ -491,7 +510,7 @@ def render_firms_page() -> None:
                 try:
                     record_manual_check(
                         connection,
-                        selected_firm["firm_id"],
+                        firm_id,
                         datetime.now().replace(microsecond=0).isoformat(),
                     )
                 except (ValueError, LookupError, sqlite3.Error) as error:
@@ -503,6 +522,179 @@ def render_firms_page() -> None:
                 "Records that YOU looked at the saved link. "
                 "It does not change any opportunity."
             )
+
+            if detail["monitoring"] != "automated":
+                with st.expander("Enable automatic checks (advanced)"):
+                    st.warning(
+                        "Only for sites whose terms of use you have READ and that "
+                        "do not forbid automated access. A check makes about 8 "
+                        "requests, one per second, only when you click Check now."
+                    )
+                    with st.form(
+                        key=f"enable_monitoring_{firm_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        prefilled_list_url = (
+                            detail["careers_url"]
+                            if detail["source_type"] != "search_link"
+                            else ""
+                        )
+                        list_url = st.text_input(
+                            "List page address",
+                            value=prefilled_list_url or "",
+                        )
+                        api_url_template = st.text_input(
+                            "API address template (must contain {page})"
+                        )
+                        terms_url = st.text_input(
+                            "Terms of use page you read (address)"
+                        )
+                        terms_choices = {
+                            "Silent: no mention of automated access": "silent",
+                            "Permission granted in writing": "permission_granted",
+                            "Forbids automated access": "forbids",
+                        }
+                        terms_choice = st.selectbox(
+                            "What did the terms say?",
+                            list(terms_choices),
+                        )
+                        terms_reviewed_on = st.date_input(
+                            "Date you read them",
+                            value=date.today(),
+                            format="YYYY-MM-DD",
+                        )
+                        terms_note = st.text_area(
+                            "Your note (what you read, in your own words)"
+                        )
+                        enable_submitted = st.form_submit_button(
+                            "Enable automatic checks"
+                        )
+
+                    if enable_submitted:
+                        try:
+                            set_firm_monitoring(
+                                connection,
+                                firm_id,
+                                adapter=ADAPTER_NAME,
+                                list_url=list_url,
+                                api_url_template=api_url_template,
+                                terms_url=terms_url,
+                                terms_reading=terms_choices[terms_choice],
+                                terms_reviewed_on=terms_reviewed_on,
+                                terms_note=terms_note or None,
+                            )
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+            else:
+                try:
+                    monitoring_config = load_monitoring_config(
+                        detail["source_config"]
+                    )
+                except ValueError as error:
+                    st.warning(f"Monitoring configuration is unreadable: {error}")
+                    with st.form(
+                        key=f"disable_monitoring_{firm_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        disable_submitted = st.form_submit_button(
+                            "Disable automatic checks"
+                        )
+                    if disable_submitted:
+                        try:
+                            disable_firm_monitoring(connection, firm_id)
+                        except (LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+                else:
+                    terms = monitoring_config["terms"]
+                    terms_url = terms["url"]
+                    st.markdown(
+                        "Automatic checks: enabled. "
+                        f"Terms reviewed on {terms['reviewed_on']} "
+                        f"({terms['reading']}). "
+                        f"[Terms of use]({terms_url})"
+                    )
+                    st.caption(
+                        f"Cooldown: at least {MIN_MINUTES_BETWEEN_CHECKS} minutes "
+                        "between automatic checks. A check makes about 8 requests, "
+                        "one per second."
+                    )
+                    with st.form(
+                        key=f"run_check_{firm_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        run_submitted = st.form_submit_button(
+                            "Check now (automatic)"
+                        )
+
+                    if not os.environ.get("TRACKER_CONTACT", "").strip():
+                        st.caption(
+                            "Set the TRACKER_CONTACT environment variable before "
+                            "starting the app to run automatic checks."
+                        )
+
+                    if run_submitted:
+                        try:
+                            with st.spinner("Checking..."):
+                                check_result = run_check(connection, firm_id)
+                        except (ValueError, LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            newest_checks = list_checks(
+                                connection,
+                                firm_id,
+                                limit=1,
+                            )
+                            newest = newest_checks[0] if newest_checks else None
+                            status = check_result["status"]
+                            if status in ("ok", "empty"):
+                                text = (
+                                    f"Check {status}: "
+                                    f"{check_result['new']} new, "
+                                    f"{check_result['changed']} changed, "
+                                    f"{check_result['unchanged']} unchanged, "
+                                    f"{check_result['missing']} missing, "
+                                    f"{check_result['closed']} closed, "
+                                    f"{check_result['reopened']} reopened "
+                                    f"({check_result['requests']} requests)."
+                                )
+                                st.session_state[check_msg_key] = ("success", text)
+                            elif status in ("failed", "blocked"):
+                                error_text = (
+                                    newest["error"]
+                                    if newest is not None
+                                    and newest["error"]
+                                    else "unknown error"
+                                )
+                                text = (
+                                    f"Check {status}: {error_text}. "
+                                    "Nothing was changed in your opportunities."
+                                )
+                                st.session_state[check_msg_key] = ("error", text)
+                            st.rerun()
+
+                    with st.form(
+                        key=f"disable_monitoring_{firm_id}",
+                        clear_on_submit=False,
+                        border=True,
+                    ):
+                        disable_submitted = st.form_submit_button(
+                            "Disable automatic checks"
+                        )
+                    if disable_submitted:
+                        try:
+                            disable_firm_monitoring(connection, firm_id)
+                        except (LookupError, sqlite3.Error) as error:
+                            st.error(str(error))
+                        else:
+                            st.rerun()
+
             st.markdown("**Check log**")
             checks = list_checks(connection, selected_firm["firm_id"])
             if checks:

@@ -1,10 +1,12 @@
 """Write services for application, activity, and manual check records."""
 
 from datetime import date, datetime
+import json
 import sqlite3
 from uuid import uuid4
 from urllib.parse import urlsplit
 
+from tracker.adapters import ADAPTERS
 from tracker.models import (
     ACTIVITY_CREATED,
     ACTIVITY_NOTE,
@@ -15,6 +17,7 @@ from tracker.models import (
 )
 
 MANUAL_CHECK_EVIDENCE = "manual: checked by user"
+TERMS_READINGS = ("silent", "permission_granted")
 
 
 def _nullable_text(value: str | None) -> str | None:
@@ -63,6 +66,111 @@ def _validate_url(url: str | None) -> str | None:
     if not urlsplit(clean_url).netloc:
         raise ValueError("URL must contain a host")
     return clean_url
+
+
+def set_firm_monitoring(
+    conn: sqlite3.Connection,
+    firm_id: int,
+    *,
+    adapter: str,
+    list_url: str,
+    api_url_template: str,
+    terms_url: str,
+    terms_reading: str,
+    terms_reviewed_on: str | date,
+    terms_note: str | None = None,
+    on_date: str | date | None = None,
+) -> None:
+    """Enable automated checks after validating their source and terms record."""
+    if adapter not in ADAPTERS:
+        raise ValueError(f"unknown adapter: {adapter}")
+    if not isinstance(api_url_template, str):
+        raise ValueError("api_url_template must be a URL template")
+    if api_url_template.count("{page}") != 1:
+        raise ValueError("api_url_template must contain {page} exactly once")
+    replaced_template = api_url_template.replace("{page}", "2")
+    if "{" in replaced_template or "}" in replaced_template:
+        raise ValueError("api_url_template contains unsupported braces")
+
+    list_value = _validate_url(list_url)
+    template_value = _validate_url(replaced_template)
+    terms_value = _validate_url(terms_url)
+    if list_value is None or template_value is None or terms_value is None:
+        raise ValueError("list_url, api_url_template and terms_url are required URLs")
+
+    list_host = urlsplit(list_value).hostname
+    template_host = urlsplit(template_value).hostname
+    if (
+        list_host is None
+        or template_host is None
+        or list_host.lower() != template_host.lower()
+    ):
+        raise ValueError("list_url and api_url_template must use the same host")
+
+    if terms_reading == "forbids":
+        raise ValueError(
+            "automatic checks are not allowed when the terms forbid automated access"
+        )
+    if terms_reading not in TERMS_READINGS:
+        raise ValueError(f"invalid terms_reading: {terms_reading}")
+
+    reviewed = _parse_date(terms_reviewed_on, "terms_reviewed_on")
+    if reviewed is None:
+        raise ValueError("terms_reviewed_on must be YYYY-MM-DD")
+    effective_date = _parse_date(on_date, "on_date")
+    if effective_date is None:
+        effective_date = date.today().isoformat()
+    if reviewed > effective_date:
+        raise ValueError("terms_reviewed_on must not be later than on_date")
+
+    source_config = {
+        "adapter": adapter,
+        "list_url": list_value,
+        "api_url_template": api_url_template,
+        "first_api_page": 2,
+        "max_pages": 30,
+        "terms": {
+            "url": terms_value,
+            "reading": terms_reading,
+            "reviewed_on": reviewed,
+            "note": _nullable_text(terms_note),
+        },
+    }
+
+    with conn:
+        firm = conn.execute(
+            "SELECT id FROM firms WHERE id = ?",
+            (firm_id,),
+        ).fetchone()
+        if firm is None:
+            raise LookupError(f"unknown firm id: {firm_id}")
+        conn.execute(
+            """
+            UPDATE firms
+            SET monitoring = 'automated', careers_url = ?,
+                source_type = 'careers_page', source_config = ?
+            WHERE id = ?
+            """,
+            (list_value, json.dumps(source_config), firm_id),
+        )
+
+
+def disable_firm_monitoring(
+    conn: sqlite3.Connection,
+    firm_id: int,
+) -> None:
+    """Disable automatic checks without removing their saved configuration."""
+    with conn:
+        firm = conn.execute(
+            "SELECT id FROM firms WHERE id = ?",
+            (firm_id,),
+        ).fetchone()
+        if firm is None:
+            raise LookupError(f"unknown firm id: {firm_id}")
+        conn.execute(
+            "UPDATE firms SET monitoring = 'manual' WHERE id = ?",
+            (firm_id,),
+        )
 
 
 def add_application(
