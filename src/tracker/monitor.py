@@ -5,11 +5,14 @@ import json
 import os
 import sqlite3
 import time
+from pathlib import Path
 
 from tracker.adapters import ADAPTERS
 from tracker.adapters.base import AdapterResult
 from tracker.checks import apply_check_result
 from tracker.service import MANUAL_CHECK_EVIDENCE, TERMS_READINGS
+from tracker.triage.cache import RecordingTransport, ResponseCache
+from tracker.triage.contract import utc_now_iso
 from tracker.triage.fetcher import Fetcher
 from tracker.triage.transport import build_user_agent, urllib_transport
 
@@ -17,12 +20,27 @@ from tracker.triage.transport import build_user_agent, urllib_transport
 MIN_MINUTES_BETWEEN_CHECKS = 30
 
 
-def build_live_fetcher(contact: str) -> Fetcher:
+def build_live_fetcher(contact: str, cache_dir: str | Path | None = None) -> Fetcher:
     """Build the polite live fetcher with the run's contact in its User-Agent."""
     effective_contact = (contact or os.environ.get("TRACKER_CONTACT", "")).strip()
     user_agent = build_user_agent(effective_contact, environ=os.environ)
+    transport = urllib_transport
+    if isinstance(cache_dir, str):
+        cache_dir = cache_dir.strip()
+        if cache_dir:
+            transport = RecordingTransport(
+                urllib_transport,
+                ResponseCache(Path(cache_dir)),
+                clock=utc_now_iso,
+            )
+    elif cache_dir is not None:
+        transport = RecordingTransport(
+            urllib_transport,
+            ResponseCache(Path(cache_dir)),
+            clock=utc_now_iso,
+        )
     return Fetcher(
-        urllib_transport,
+        transport,
         user_agent,
         sleep=time.sleep,
         clock=time.monotonic,
@@ -156,7 +174,11 @@ def run_check(
         raise ValueError("a contact address is required: set TRACKER_CONTACT")
 
     if fetcher is None:
-        fetcher = build_live_fetcher(contact or "")
+        cache_dir = os.environ.get("TRACKER_CACHE_DIR", "").strip()
+        if cache_dir:
+            fetcher = build_live_fetcher(contact or "", cache_dir=cache_dir)
+        else:
+            fetcher = build_live_fetcher(contact or "")
 
     try:
         result = ADAPTERS[adapter_name](fetcher, config)

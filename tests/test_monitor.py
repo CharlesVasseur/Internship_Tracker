@@ -8,6 +8,7 @@ from fake_transport import FakeClock, FakeTransport, reply, robots_ok
 from tracker.db import connect, init_db
 import tracker.monitor as monitor_module
 from tracker.monitor import load_monitoring_config, run_check
+from tracker.captures import read_cache
 from tracker.service import (
     add_manual_opportunity,
     disable_firm_monitoring,
@@ -513,3 +514,175 @@ def test_run_check_rejects_invalid_contact_before_transport(tmp_path, monkeypatc
         )
 
     assert called == []
+
+
+def test_run_check_live_env_cache_records_every_request(tmp_path, monkeypatch):
+    connection, firm_id = seed(tmp_path)
+    configure(connection, firm_id)
+    cache_dir = tmp_path / "check_cache"
+    clock = FakeClock()
+
+    def scripted_transport(url, headers, timeout):
+        if url == "https://jobs.example.test/robots.txt":
+            return robots_ok()
+        if url == LIST_URL:
+            return reply(
+                body=(
+                    '<div class="cards-container"><div class="jobs-count">4</div>'
+                    + card("a")
+                    + card("b")
+                    + "</div>"
+                ),
+            )
+        if url == API_TEMPLATE.format(page=2):
+            return reply(body=api_page(["c", "d"]), ctype="application/json")
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.setattr(monitor_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(monitor_module.time, "monotonic", clock)
+    monkeypatch.setenv("TRACKER_CACHE_DIR", str(cache_dir))
+
+    result = run_check(
+        connection,
+        firm_id,
+        contact="test@example.test",
+        now="2026-11-20T10:00:00",
+    )
+
+    assert result["status"] == "ok"
+    entries, warnings = read_cache(cache_dir)
+    assert warnings == []
+    assert {entry.url for entry in entries} == {
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+        API_TEMPLATE.format(page=2),
+    }
+    bodies = {
+        entry.url: entry.body
+        for entry in entries
+        if entry.body is not None
+    }
+    assert b"jobs-count" in bodies[LIST_URL]
+    assert b'"nothingMoreToDisplay"' in bodies[API_TEMPLATE.format(page=2)]
+    for cache_file in cache_dir.rglob("*"):
+        if cache_file.is_file():
+            assert "test@example.test" not in cache_file.read_text(encoding="utf-8")
+
+
+def test_run_check_live_env_cache_keeps_entries_after_api_429(tmp_path, monkeypatch):
+    connection, firm_id = seed(tmp_path)
+    configure(connection, firm_id)
+    cache_dir = tmp_path / "check_cache"
+    clock = FakeClock()
+
+    def scripted_transport(url, headers, timeout):
+        if url == "https://jobs.example.test/robots.txt":
+            return robots_ok()
+        if url == LIST_URL:
+            return reply(
+                body=(
+                    '<div class="cards-container"><div class="jobs-count">2</div>'
+                    + card("a")
+                    + "</div>"
+                ),
+            )
+        if url == API_TEMPLATE.format(page=2):
+            return reply(status=429, body="rate limited")
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.setattr(monitor_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(monitor_module.time, "monotonic", clock)
+    monkeypatch.setenv("TRACKER_CACHE_DIR", str(cache_dir))
+
+    result = run_check(
+        connection,
+        firm_id,
+        contact="test@example.test",
+        now="2026-11-20T10:00:00",
+    )
+
+    assert result["status"] == "blocked"
+    entries, warnings = read_cache(cache_dir)
+    assert warnings == []
+    assert {entry.url for entry in entries} == {
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+        API_TEMPLATE.format(page=2),
+    }
+    api_entry = next(entry for entry in entries if entry.url == API_TEMPLATE.format(page=2))
+    assert api_entry.status == 429
+    assert api_entry.body == b"rate limited"
+
+
+def test_run_check_without_cache_env_creates_no_folder(tmp_path, monkeypatch):
+    connection, firm_id = seed(tmp_path)
+    configure(connection, firm_id)
+    cache_dir = tmp_path / "check_cache"
+    clock = FakeClock()
+
+    def scripted_transport(url, headers, timeout):
+        if url == "https://jobs.example.test/robots.txt":
+            return robots_ok()
+        if url == LIST_URL:
+            return reply(
+                body=(
+                    '<div class="cards-container"><div class="jobs-count">1</div>'
+                    + card("a")
+                    + "</div>"
+                ),
+            )
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.delenv("TRACKER_CACHE_DIR", raising=False)
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.setattr(monitor_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(monitor_module.time, "monotonic", clock)
+
+    run_check(
+        connection,
+        firm_id,
+        contact="test@example.test",
+        now="2026-11-20T10:00:00",
+    )
+
+    assert not cache_dir.exists()
+
+
+def test_build_live_fetcher_with_cache_dir_records_requests(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "check_cache"
+    clock = FakeClock()
+
+    def scripted_transport(url, headers, timeout):
+        if url == "https://jobs.example.test/robots.txt":
+            return robots_ok()
+        if url == LIST_URL:
+            return reply(
+                body=(
+                    '<div class="cards-container"><div class="jobs-count">1</div>'
+                    + card("a")
+                    + "</div>"
+                ),
+            )
+        if url == API_TEMPLATE.format(page=2):
+            raise AssertionError("API page is not needed for an exact announced count")
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.setattr(monitor_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(monitor_module.time, "monotonic", clock)
+
+    fetcher = monitor_module.build_live_fetcher(
+        "test@example.test",
+        cache_dir=cache_dir,
+    )
+    first = fetcher.fetch(LIST_URL)
+
+    assert first.status == "ok"
+    entries, warnings = read_cache(cache_dir)
+    assert warnings == []
+    assert {entry.url for entry in entries} == {
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+    }

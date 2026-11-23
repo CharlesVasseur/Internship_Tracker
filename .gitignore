@@ -15,3 +15,4 @@ triage_cache/
 tests/local_fixtures/*
 !tests/local_fixtures/README.md
 triage_output*.jsonl
+check_cache/
