@@ -1,13 +1,15 @@
 """Offline tests for monitoring configuration and check execution."""
 
 import json
+import hashlib
+from pathlib import Path
 
 import pytest
 
 from fake_transport import FakeClock, FakeTransport, reply, robots_ok
 from tracker.db import connect, init_db
 import tracker.monitor as monitor_module
-from tracker.monitor import load_monitoring_config, run_check
+from tracker.monitor import load_monitoring_config, replay_adapter, run_check
 from tracker.captures import read_cache
 from tracker.service import (
     add_manual_opportunity,
@@ -15,7 +17,8 @@ from tracker.service import (
     set_firm_monitoring,
 )
 from tracker.triage.fetcher import Fetcher
-from tracker.triage.transport import TransportError
+from tracker.triage.cache import ResponseCache
+from tracker.triage.transport import RawResponse, TransportError
 
 
 LIST_URL = "https://jobs.example.test/list"
@@ -686,3 +689,174 @@ def test_build_live_fetcher_with_cache_dir_records_requests(tmp_path, monkeypatc
         "https://jobs.example.test/robots.txt",
         LIST_URL,
     }
+
+
+def _put_cached(cache: ResponseCache, url: str, body: str, content_type: str) -> None:
+    cache.put_response(
+        url,
+        RawResponse(
+            200,
+            {"content-type": content_type},
+            body.encode("utf-8"),
+            False,
+        ),
+        "2026-11-20T10:00:00Z",
+    )
+
+
+def _seed_replay_cache(tmp_path: Path, *, include_api: bool = True) -> tuple[Path, dict]:
+    cache_dir = tmp_path / "replay_cache"
+    cache = ResponseCache(cache_dir)
+    _put_cached(cache, "https://jobs.example.test/robots.txt", "User-agent: *\nAllow: /\n", "text/plain")
+
+    list_html = (
+        '<div class="cards-container"><div class="jobs-count">4</div>'
+        + card("a")
+        + card("b")
+        + '<div class="job-card"><div class="job-card-title">Ignored</div></div>'
+        + "</div>"
+    )
+    _put_cached(cache, LIST_URL, list_html, "text/html; charset=utf-8")
+
+    if include_api:
+        api_html = (
+            '<div class="cards-container">'
+            + card("c")
+            + card("d")
+            + "</div>"
+        )
+        api_text = json.dumps(
+            {
+                "html": api_html,
+                "jobsCount": 2,
+                "nothingMoreToDisplay": True,
+            }
+        )
+        _put_cached(
+            cache,
+            API_TEMPLATE.format(page=2),
+            api_text,
+            "application/json; charset=utf-8",
+        )
+    return cache_dir, valid_monitoring_config()
+
+
+def test_replay_adapter_returns_ok_with_ignored_evidence(tmp_path):
+    cache_dir, config = _seed_replay_cache(tmp_path)
+
+    result = replay_adapter(config, cache_dir)
+
+    assert result.status == "ok"
+    assert len(result.listings) == 4
+    assert "ignored=1" in result.evidence
+
+
+def test_replay_adapter_missing_api_cache_is_visible_failure(tmp_path):
+    cache_dir, config = _seed_replay_cache(tmp_path, include_api=False)
+
+    result = replay_adapter(config, cache_dir)
+
+    assert result.status == "failed"
+    assert "CacheMiss" in result.error
+    assert "is not in the cache" in result.error
+
+
+def test_replay_check_script_prints_ok_and_preserves_database(tmp_path, capsys):
+    from scripts.replay_check import main
+
+    cache_dir, _ = _seed_replay_cache(tmp_path)
+    database_path = tmp_path / "tracker.db"
+    init_db(database_path)
+    connection = connect(database_path)
+    connection.execute(
+        "INSERT INTO firms (profile, name, country) VALUES (?, ?, ?)",
+        ("profile", "Example Firm", "Example Country"),
+    )
+    firm_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+    configure(connection, firm_id)
+    connection.commit()
+
+    before = hashlib.sha256(database_path.read_bytes()).digest()
+    exit_code = main(
+        [
+            "--cache-dir",
+            str(cache_dir),
+            "--db",
+            str(database_path),
+            "--firm-id",
+            str(firm_id),
+        ]
+    )
+    after = hashlib.sha256(database_path.read_bytes()).digest()
+    output = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "status: ok" in output.out
+    assert "ignored=1" in output.out
+    assert "listings: 4" in output.out
+    assert before == after
+
+
+def test_replay_check_script_missing_api_exits_one(tmp_path, capsys):
+    from scripts.replay_check import main
+
+    cache_dir, _ = _seed_replay_cache(tmp_path, include_api=False)
+    database_path = tmp_path / "tracker.db"
+    init_db(database_path)
+    connection = connect(database_path)
+    connection.execute(
+        "INSERT INTO firms (profile, name, country) VALUES (?, ?, ?)",
+        ("profile", "Example Missing Firm", "Example Country"),
+    )
+    firm_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+    configure(connection, firm_id)
+    connection.commit()
+
+    exit_code = main(
+        [
+            "--cache-dir",
+            str(cache_dir),
+            "--db",
+            str(database_path),
+            "--firm-id",
+            str(firm_id),
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "status: failed" in output.out
+    assert "is not in the cache" in output.out
+
+
+@pytest.mark.parametrize("matches", [[], ["Example One", "Example Two"]])
+def test_replay_check_script_none_or_multiple_matches_exit_two(tmp_path, capsys, matches):
+    from scripts.replay_check import main
+
+    cache_dir, _ = _seed_replay_cache(tmp_path)
+    database_path = tmp_path / "tracker.db"
+    init_db(database_path)
+    connection = connect(database_path)
+    for name in matches:
+        connection.execute(
+            "INSERT INTO firms (profile, name, country) VALUES (?, ?, ?)",
+            ("profile", name, "Example Country"),
+        )
+        firm_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        configure(connection, firm_id)
+    connection.commit()
+
+    exit_code = main(
+        [
+            "--cache-dir",
+            str(cache_dir),
+            "--db",
+            str(database_path),
+            "--name-contains",
+            "Example",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "expected exactly one matching automated firm" in output.err

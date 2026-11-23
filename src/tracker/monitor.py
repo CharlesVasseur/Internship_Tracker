@@ -11,7 +11,7 @@ from tracker.adapters import ADAPTERS
 from tracker.adapters.base import AdapterResult
 from tracker.checks import apply_check_result
 from tracker.service import MANUAL_CHECK_EVIDENCE, TERMS_READINGS
-from tracker.triage.cache import RecordingTransport, ResponseCache
+from tracker.triage.cache import RecordingTransport, ReplayTransport, ResponseCache
 from tracker.triage.contract import utc_now_iso
 from tracker.triage.fetcher import Fetcher
 from tracker.triage.transport import build_user_agent, urllib_transport
@@ -45,6 +45,20 @@ def build_live_fetcher(contact: str, cache_dir: str | Path | None = None) -> Fet
         sleep=time.sleep,
         clock=time.monotonic,
     )
+
+
+def replay_adapter(config: dict, cache_dir) -> AdapterResult:
+    """Run one configured adapter entirely from saved offline responses."""
+    transport = ReplayTransport(ResponseCache(Path(cache_dir)))
+    user_agent = build_user_agent("replay@example.invalid", {})
+    fetcher = Fetcher(transport, user_agent, sleep=lambda seconds: None)
+    try:
+        return ADAPTERS[config["adapter"]](fetcher, config)
+    except Exception as error:
+        return AdapterResult(
+            "failed",
+            error=f"internal error: {type(error).__name__}: {error}",
+        )
 
 
 def load_monitoring_config(source_config_text) -> dict:

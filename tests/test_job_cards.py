@@ -170,10 +170,41 @@ def test_missing_id_and_missing_link_skip_only_bad_cards():
     result = parse_cards(html)
 
     assert [card.source_job_id for card in result.cards] == ["card-good"]
-    assert result.problems == (
-        "card 1 skipped: missing id",
-        "card 2 skipped: missing link",
+    assert result.ignored == 1
+    assert result.problems == ("card 2 skipped: missing link",)
+
+
+def test_idless_card_is_ignored_and_api_page_reports_it():
+    html = (
+        '<div class="cards-container">'
+        '<div class="job-card" id="card-a"><div class="job-card-overlay">'
+        '<a href="https://jobs.example.test/a"></a></div>'
+        '<div class="job-card-title">Example A</div></div>'
+        '<div class="job-card" id="card-b"><div class="job-card-overlay">'
+        '<a href="https://jobs.example.test/b"></a></div>'
+        '<div class="job-card-title">Example B</div></div>'
+        '<div class="job-card"><div class="job-card-overlay">'
+        '<a href="https://jobs.example.test/no-id"></a></div>'
+        '<div class="job-card-title">Ignored</div></div>'
+        "</div>"
     )
+
+    result = parse_cards(html)
+
+    assert [card.source_job_id for card in result.cards] == ["card-a", "card-b"]
+    assert result.ignored == 1
+    assert result.problems == ()
+
+    api_result = parse_jobs_api(
+        json.dumps(
+            {
+                "html": html,
+                "jobsCount": 3,
+                "nothingMoreToDisplay": True,
+            }
+        )
+    )
+    assert api_result.ignored == 1
 
 
 def test_duplicate_ids_keep_first_and_count_second():

@@ -32,6 +32,14 @@ def html(cards: str, count: int) -> str:
     return f'<div class="cards-container"><div class="jobs-count">{count}</div>{cards}</div>'
 
 
+def idless_card() -> str:
+    return (
+        '<div class="job-card"><div class="job-card-overlay">'
+        '<a href="https://jobs.example.test/job/no-id"></a></div>'
+        '<div class="job-card-title">Ignored</div></div>'
+    )
+
+
 def fetcher(transport: FakeTransport) -> Fetcher:
     clock = transport.clock or FakeClock()
     return Fetcher(
@@ -75,7 +83,81 @@ def test_collects_pages_and_maps_listing_fields():
     assert result.listings[0].description == (
         "Example Category | Example Contract | Example Time"
     )
-    assert result.evidence == ("pages=2", "cards=4", "announced=4", "duplicates=0")
+    assert result.evidence == (
+        "pages=2",
+        "cards=4",
+        "announced=4",
+        "duplicates=0",
+        "ignored=0",
+    )
+
+
+def test_idless_list_and_api_cards_are_ignored_in_ok_evidence():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(body=html(card("a") + card("b") + idless_card(), 4)),
+    )
+    transport.add(
+        API_TEMPLATE.format(page=2),
+        reply(body=api(card("c") + card("d"), 2, True), ctype="application/json"),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "ok"
+    assert len(result.listings) == 4
+    assert "ignored=1" in result.evidence
+
+
+def test_idless_card_is_named_when_count_check_fails():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(body=html(card("a") + card("b") + idless_card(), 4)),
+    )
+    transport.add(
+        API_TEMPLATE.format(page=2),
+        reply(body=api(card("c"), 1, True), ctype="application/json"),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "failed"
+    assert result.error == (
+        "incomplete or inconsistent list: collected 3 unique cards, announced 4"
+        "; ignored 1 card element(s) without id"
+    )
+
+
+def test_all_idless_cards_name_ignored_count_and_collect_zero():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(body=html(idless_card() + idless_card(), 3)),
+    )
+    transport.add(
+        API_TEMPLATE.format(page=2),
+        reply(body=api(idless_card(), 1, True), ctype="application/json"),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "failed"
+    assert "collected 0 unique cards, announced 3" in result.error
+    assert "ignored 3 card element(s) without id" in result.error
 
 
 def test_three_list_cards_stop_after_list_page():
@@ -96,7 +178,13 @@ def test_three_list_cards_stop_after_list_page():
         "https://jobs.example.test/robots.txt",
         LIST_URL,
     ]
-    assert result.evidence == ("pages=1", "cards=3", "announced=3", "duplicates=0")
+    assert result.evidence == (
+        "pages=1",
+        "cards=3",
+        "announced=3",
+        "duplicates=0",
+        "ignored=0",
+    )
 
 
 def test_four_list_cards_for_three_announced_stops_without_api():
@@ -275,7 +363,8 @@ def test_mismatch_duplicates_empty_page_and_page_limit_are_failed():
         {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
     )
     assert result.status == "ok"
-    assert result.evidence[-1] == "duplicates=1"
+    assert "duplicates=1" in result.evidence
+    assert result.evidence[-1] == "ignored=0"
 
     transport = FakeTransport()
     transport.add("https://jobs.example.test/robots.txt", robots_ok())

@@ -84,6 +84,7 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
     cards: list[Card] = list(parsed.cards)
     problems = list(parsed.problems)
     duplicates = parsed.duplicates
+    ignored = parsed.ignored
     seen_ids = {card.source_job_id for card in cards}
     pages = 1
 
@@ -96,6 +97,7 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
                 f"cards={len(cards)}",
                 f"announced={announced}",
                 f"duplicates={duplicates}",
+                f"ignored={ignored}",
             ),
         )
 
@@ -105,6 +107,11 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
             error=(
                 f"incomplete or inconsistent list: collected {len(cards)} "
                 f"unique cards, announced {announced}"
+                + (
+                    f"; ignored {ignored} card element(s) without id"
+                    if ignored > 0
+                    else ""
+                )
             ),
         )
 
@@ -127,6 +134,7 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
         pages += 1
         problems.extend(api_page.problems)
         duplicates += api_page.duplicates
+        ignored += api_page.ignored
         for card in api_page.cards:
             if card.source_job_id in seen_ids:
                 duplicates += 1
@@ -151,6 +159,8 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
         )
         if problems:
             error += "; " + "; ".join(problems)
+        if ignored > 0:
+            error += f"; ignored {ignored} card element(s) without id"
         return AdapterResult("failed", error=error)
 
     return AdapterResult(
@@ -161,5 +171,6 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
             f"cards={len(cards)}",
             f"announced={announced}",
             f"duplicates={duplicates}",
+            f"ignored={ignored}",
         ),
     )

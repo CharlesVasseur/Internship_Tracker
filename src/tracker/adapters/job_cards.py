@@ -23,6 +23,7 @@ class CardParse:
     problems: tuple[str, ...]
     duplicates: int
     has_container: bool
+    ignored: int = 0
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ApiPage:
     duplicates: int
     jobs_count: int
     nothing_more: bool
+    ignored: int = 0
 
 
 class _Node:
@@ -157,11 +159,12 @@ def parse_cards(html: str) -> CardParse:
     problems: list[str] = []
     seen_ids: set[str] = set()
     duplicates = 0
+    ignored = 0
 
     for position, card_node in enumerate(parser.card_nodes, start=1):
         card_id = _collapsed_text(card_node.attrs.get("id") or "")
         if not card_id:
-            problems.append(f"card {position} skipped: missing id")
+            ignored += 1
             continue
 
         overlay = _first_descendant_with_classes(card_node, {"job-card-overlay"})
@@ -227,6 +230,7 @@ def parse_cards(html: str) -> CardParse:
         problems=tuple(problems),
         duplicates=duplicates,
         has_container=parser.container_found,
+        ignored=ignored,
     )
 
 
@@ -286,4 +290,5 @@ def parse_jobs_api(text: str) -> ApiPage:
         duplicates=card_parse.duplicates,
         jobs_count=jobs_count,
         nothing_more=nothing_more,
+        ignored=card_parse.ignored,
     )
