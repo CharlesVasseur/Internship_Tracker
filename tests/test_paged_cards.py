@@ -78,6 +78,76 @@ def test_collects_pages_and_maps_listing_fields():
     assert result.evidence == ("pages=2", "cards=4", "announced=4", "duplicates=0")
 
 
+def test_three_list_cards_stop_after_list_page():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(body=html(card("a") + card("b") + card("c"), 3)),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "ok"
+    assert transport.calls == [
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+    ]
+    assert result.evidence == ("pages=1", "cards=3", "announced=3", "duplicates=0")
+
+
+def test_four_list_cards_for_three_announced_stops_without_api():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(body=html(card("a") + card("b") + card("c") + card("d"), 3)),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "failed"
+    assert result.error == (
+        "incomplete or inconsistent list: collected 4 unique cards, announced 3"
+    )
+    assert transport.calls == [
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+    ]
+
+
+def test_json_api_content_type_is_text_to_real_fetcher():
+    transport = FakeTransport()
+    transport.add("https://jobs.example.test/robots.txt", robots_ok())
+    transport.add(
+        LIST_URL,
+        reply(
+            body=html(card("a") + card("b"), 4),
+            ctype="text/html; charset=utf-8",
+        ),
+    )
+    transport.add(
+        API_TEMPLATE.format(page=2),
+        reply(
+            body=api(card("c") + card("d"), 2, True),
+            ctype="application/json; charset=utf-8",
+        ),
+    )
+
+    result = check_paged_cards(
+        fetcher(transport),
+        {"list_url": LIST_URL, "api_url_template": API_TEMPLATE},
+    )
+
+    assert result.status == "ok"
+
+
 def test_requests_all_pages_until_end_marker():
     transport = FakeTransport()
     transport.add("https://jobs.example.test/robots.txt", robots_ok())

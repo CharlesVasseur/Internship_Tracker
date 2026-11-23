@@ -4,6 +4,7 @@ from datetime import date, datetime
 import json
 import os
 import sqlite3
+import time
 
 from tracker.adapters import ADAPTERS
 from tracker.adapters.base import AdapterResult
@@ -14,6 +15,18 @@ from tracker.triage.transport import build_user_agent, urllib_transport
 
 
 MIN_MINUTES_BETWEEN_CHECKS = 30
+
+
+def build_live_fetcher(contact: str) -> Fetcher:
+    """Build the polite live fetcher with the run's contact in its User-Agent."""
+    effective_contact = (contact or os.environ.get("TRACKER_CONTACT", "")).strip()
+    user_agent = build_user_agent(effective_contact, environ=os.environ)
+    return Fetcher(
+        urllib_transport,
+        user_agent,
+        sleep=time.sleep,
+        clock=time.monotonic,
+    )
 
 
 def load_monitoring_config(source_config_text) -> dict:
@@ -143,9 +156,7 @@ def run_check(
         raise ValueError("a contact address is required: set TRACKER_CONTACT")
 
     if fetcher is None:
-        effective_contact = contact or os.environ.get("TRACKER_CONTACT")
-        user_agent = build_user_agent(effective_contact)
-        fetcher = Fetcher(urllib_transport, user_agent)
+        fetcher = build_live_fetcher(contact or "")
 
     try:
         result = ADAPTERS[adapter_name](fetcher, config)

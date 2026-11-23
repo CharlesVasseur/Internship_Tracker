@@ -87,6 +87,27 @@ def check_paged_cards(fetcher: Fetcher, config: dict) -> AdapterResult:
     seen_ids = {card.source_job_id for card in cards}
     pages = 1
 
+    if len(cards) == announced and not problems:
+        return AdapterResult(
+            "ok",
+            listings=tuple(_listing(card) for card in cards),
+            evidence=(
+                f"pages={pages}",
+                f"cards={len(cards)}",
+                f"announced={announced}",
+                f"duplicates={duplicates}",
+            ),
+        )
+
+    if len(cards) > announced:
+        return AdapterResult(
+            "failed",
+            error=(
+                f"incomplete or inconsistent list: collected {len(cards)} "
+                f"unique cards, announced {announced}"
+            ),
+        )
+
     for page in range(first_api_page, first_api_page + max_pages):
         api_url = api_template.format(page=page)
         response = fetcher.fetch(api_url)

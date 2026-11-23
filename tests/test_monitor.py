@@ -51,11 +51,24 @@ def api_page(card_ids: list[str], end: bool = True) -> str:
     )
 
 
-def make_fetcher(card_ids: list[str], *, status: int = 200) -> Fetcher:
+def make_fetcher(
+    card_ids: list[str],
+    *,
+    status: int = 200,
+    announced: int | None = None,
+) -> Fetcher:
     clock = FakeClock()
     transport = FakeTransport(clock)
     transport.add("https://jobs.example.test/robots.txt", robots_ok())
-    transport.add(LIST_URL, reply(status, body=page(card_ids)))
+    list_html = page(card_ids)
+    if announced is not None:
+        list_html = (
+            '<div class="cards-container">'
+            f'<div class="jobs-count">{announced}</div>'
+            + "".join(card(card_id) for card_id in card_ids)
+            + "</div>"
+        )
+    transport.add(LIST_URL, reply(status, body=list_html))
     if status == 200:
         transport.add(
             API_TEMPLATE.format(page=2),
@@ -176,7 +189,7 @@ def test_run_check_stores_results_and_respects_cooldown(tmp_path):
     )
     assert first["status"] == "ok"
     assert first["new"] == 2
-    assert first["requests"] == 3
+    assert first["requests"] == 2
 
     with pytest.raises(ValueError, match="wait 1 more minutes"):
         run_check(
@@ -241,7 +254,7 @@ def test_blocked_failed_and_empty_checks_do_not_change_opportunities(tmp_path):
     ).fetchall()
     assert after_block == before
 
-    failed = make_fetcher(["b"])
+    failed = make_fetcher(["b"], announced=2)
     failed_transport = failed._transport
     failed_transport.add(
         API_TEMPLATE.format(page=2),
@@ -409,3 +422,94 @@ def test_run_check_refuses_firm_with_bad_config(tmp_path):
 
     with pytest.raises(ValueError, match="automatic checks are not enabled"):
         run_check(connection, firm_id, now="2026-11-20T10:00:00")
+
+
+def test_run_check_builds_live_fetcher_offline_and_hides_contact(tmp_path, monkeypatch):
+    connection, firm_id = seed(tmp_path)
+    configure(connection, firm_id)
+    clock = FakeClock()
+    calls = []
+    sent_headers = []
+
+    def scripted_transport(url, headers, timeout):
+        calls.append(url)
+        sent_headers.append(dict(headers))
+        if url == "https://jobs.example.test/robots.txt":
+            return robots_ok()
+        if url == LIST_URL:
+            list_html = (
+                '<div class="cards-container"><div class="jobs-count">4</div>'
+                + card("a")
+                + card("b")
+                + "</div>"
+            )
+            return reply(body=list_html, ctype="text/html; charset=utf-8")
+        if url == API_TEMPLATE.format(page=2):
+            return reply(
+                body=api_page(["c", "d"]),
+                ctype="application/json; charset=utf-8",
+            )
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.setattr(monitor_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(monitor_module.time, "monotonic", clock)
+    monkeypatch.delenv("TRACKER_CONTACT", raising=False)
+
+    result = run_check(
+        connection,
+        firm_id,
+        contact="test@example.test",
+        now="2026-11-20T10:00:00",
+    )
+
+    assert result["status"] == "ok"
+    assert calls[0] == "https://jobs.example.test/robots.txt"
+    assert calls == [
+        "https://jobs.example.test/robots.txt",
+        LIST_URL,
+        API_TEMPLATE.format(page=2),
+    ]
+    for headers in sent_headers:
+        user_agent = headers["User-Agent"]
+        assert "InternshipTracker" in user_agent
+        assert "test@example.test" in user_agent
+
+    check_row = connection.execute(
+        "SELECT result FROM checks WHERE firm_id = ?", (firm_id,)
+    ).fetchone()
+    assert check_row["result"] == "ok"
+
+    contact = "test@example.test"
+    for table in ("firms", "checks", "opportunities", "applications", "activities"):
+        columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        for column in columns:
+            if column["type"].upper() == "TEXT":
+                values = connection.execute(
+                    f'SELECT "{column["name"]}" FROM {table}'
+                ).fetchall()
+                for row in values:
+                    assert contact not in (row[column["name"]] or "")
+
+
+def test_run_check_rejects_invalid_contact_before_transport(tmp_path, monkeypatch):
+    connection, firm_id = seed(tmp_path)
+    configure(connection, firm_id)
+    called = []
+
+    def scripted_transport(url, headers, timeout):
+        called.append(url)
+        raise AssertionError("transport must not be called")
+
+    monkeypatch.setattr(monitor_module, "urllib_transport", scripted_transport)
+    monkeypatch.delenv("TRACKER_CONTACT", raising=False)
+
+    with pytest.raises(ValueError, match="contact address"):
+        run_check(
+            connection,
+            firm_id,
+            contact="not-a-contact",
+            now="2026-11-20T10:00:00",
+        )
+
+    assert called == []
